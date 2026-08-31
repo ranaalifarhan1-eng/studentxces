@@ -330,7 +330,9 @@ class TenantStorageIsolationTest extends TestCase
             'file_size'  => 1024,
         ]);
 
-        $response = $this->actingAs($this->superAdmin)->get("/school/students/documents/{$docB->id}/download");
+        $response = $this->actingAs($this->superAdmin)
+            ->withSession(['active_school_id' => $this->schoolB->id])
+            ->get("/school/students/documents/{$docB->id}/download");
         $response->assertStatus(200);
     }
 

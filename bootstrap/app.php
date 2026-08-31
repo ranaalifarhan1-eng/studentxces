@@ -20,6 +20,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'permission'         => \Spatie\Permission\Middleware\PermissionMiddleware::class,
             'role_or_permission' => \Spatie\Permission\Middleware\RoleOrPermissionMiddleware::class,
             'school.module'      => \App\Http\Middleware\EnsureSchoolModule::class,
+            'school.context'     => \App\Http\Middleware\EnsureActiveSchoolContext::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

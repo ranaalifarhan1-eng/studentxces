@@ -41,6 +41,7 @@ use App\Http\Controllers\SuperAdmin\CouponController;
 use App\Http\Controllers\SuperAdmin\ModuleManagerController;
 use App\Http\Controllers\SuperAdmin\PackageController;
 use App\Http\Controllers\SuperAdmin\SchoolController;
+use App\Http\Controllers\SuperAdmin\SchoolContextController;
 use App\Http\Controllers\SuperAdmin\SubscriptionController;
 use App\Http\Controllers\SuperAdmin\UserManagementController;
 use Illuminate\Support\Facades\Route;
@@ -90,7 +91,7 @@ Route::middleware('auth')->group(function () {
     | School Admin routes (school-admin, principal)
     |--------------------------------------------------------------------------
     */
-    Route::middleware('role:super-admin|school-admin|principal|teacher|accountant|librarian')
+    Route::middleware(['role:super-admin|school-admin|principal|teacher|accountant|librarian', 'school.context'])
         ->prefix('school')
         ->name('school.')
         ->group(function () {
@@ -371,6 +372,10 @@ Route::middleware('auth')->group(function () {
             Route::resource('schools', SchoolController::class);
             Route::patch('schools/{school}/suspend', [SchoolController::class, 'suspend'])->name('schools.suspend');
             Route::patch('schools/{school}/activate', [SchoolController::class, 'activate'])->name('schools.activate');
+
+            // School Context Switcher
+            Route::post('school-context/select', [SchoolContextController::class, 'select'])->name('school-context.select');
+            Route::post('school-context/clear',  [SchoolContextController::class, 'clear'])->name('school-context.clear');
 
             // User Management
             // Packages

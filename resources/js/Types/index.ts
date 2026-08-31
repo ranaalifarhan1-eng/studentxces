@@ -44,10 +44,17 @@ export interface PageProps {
     auth: {
         user: User | null;
     };
+    active_school?: {
+        id: number;
+        name: string;
+        slug: string;
+        status: string;
+    } | null;
     school: School | null;
     flash: {
         success?: string;
         error?: string;
+        warning?: string;
     };
     faviconUrl: string | null;
     errors: Record<string, string>;

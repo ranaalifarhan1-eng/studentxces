@@ -4,13 +4,14 @@ namespace App\Traits;
 
 use App\Models\School;
 use App\Scopes\SchoolScope;
+use App\Services\ActiveSchoolContext;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
  * Apply to every school-scoped model.
  * Automatically:
- *   - Adds a global WHERE school_id = ? scope (bypassed for super-admin)
- *   - Sets school_id on create from the authenticated user
+ *   - Adds a global WHERE school_id = ? scope via ActiveSchoolContext
+ *   - Sets school_id on create from the ActiveSchoolContext
  *   - Provides a ->school() relation
  */
 trait BelongsToSchool
@@ -21,7 +22,8 @@ trait BelongsToSchool
 
         static::creating(function ($model) {
             if (empty($model->school_id) && auth()->check()) {
-                $model->school_id = auth()->user()->school_id;
+                $context = app(ActiveSchoolContext::class);
+                $model->school_id = $context->getActiveSchoolId();
             }
         });
     }

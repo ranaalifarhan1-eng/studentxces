@@ -165,11 +165,19 @@ class EnsureSchoolModuleMiddlewareTest extends TestCase
     {
         Config::set('entitlement.mode', 'enforce');
 
+        $school = School::create([
+            'name'   => 'Super Test School',
+            'slug'   => 'super-test-school',
+            'status' => 'active',
+        ]);
+
         $superAdmin = User::factory()->create();
         $superAdmin->assignRole('super-admin');
 
-        // Super Admin accessing school library with NO active subscription
-        $response = $this->actingAs($superAdmin)->get('/school/library/books');
+        // Super Admin accessing school library in active school context with NO active subscription
+        $response = $this->actingAs($superAdmin)
+            ->withSession(['active_school_id' => $school->id])
+            ->get('/school/library/books');
 
         $response->assertStatus(200);
     }

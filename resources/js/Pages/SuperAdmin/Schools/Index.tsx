@@ -1,6 +1,6 @@
 import { Head, Link, router, usePage } from '@inertiajs/react';
 import { useState } from 'react';
-import { Plus, Search, School, MoreHorizontal, Pencil, Ban, CheckCircle, Trash2, Eye } from 'lucide-react';
+import { Plus, Search, School, MoreHorizontal, Pencil, Ban, CheckCircle, Trash2, Eye, LogIn } from 'lucide-react';
 import AppLayout from '@/Layouts/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -174,6 +174,13 @@ export default function SchoolsIndex() {
                                             </Button>
                                         </DropdownMenuTrigger>
                                         <DropdownMenuContent align="end">
+                                            <DropdownMenuItem
+                                                className="flex items-center gap-2 text-sm text-indigo-600 dark:text-indigo-400 font-medium cursor-pointer"
+                                                onClick={() => router.post('/super-admin/school-context/select', { school_id: school.id })}
+                                            >
+                                                <LogIn className="w-4 h-4 shrink-0" /> Enter School Operations
+                                            </DropdownMenuItem>
+                                            <DropdownMenuSeparator />
                                             <DropdownMenuItem asChild>
                                                 <Link href={`/super-admin/schools/${school.id}`} className="flex items-center gap-2 text-sm">
                                                     <Eye className="w-4 h-4 shrink-0" /> View

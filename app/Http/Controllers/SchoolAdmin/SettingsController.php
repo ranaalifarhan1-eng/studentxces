@@ -64,14 +64,14 @@ class SettingsController extends Controller
             if ($school->logo) {
                 Storage::disk('public')->delete($school->logo);
             }
-            $path = $request->file('logo')->store("schools/{$sid}", 'public');
+            $path = $request->file('logo')->store(\App\Services\TenantStorage::schoolBrandingPath($sid), 'public');
             $school->update(['logo' => $path]);
         }
 
         if ($request->hasFile('favicon')) {
             $old = SchoolSetting::get($sid, 'favicon');
             if ($old) Storage::disk('public')->delete($old);
-            $path = $request->file('favicon')->store("schools/{$sid}", 'public');
+            $path = $request->file('favicon')->store(\App\Services\TenantStorage::schoolBrandingPath($sid), 'public');
             SchoolSetting::set($sid, 'favicon', $path, 'branding');
         }
 

@@ -19,7 +19,7 @@ class StaffDocument extends Model
 
     public function getFileUrlAttribute(): string
     {
-        return Storage::disk('private')->url($this->file_path);
+        return route('school.staff.documents.download', $this->id);
     }
 
     public function staff(): BelongsTo

@@ -19,7 +19,7 @@ class StudentDocument extends Model
 
     public function getFileUrlAttribute(): string
     {
-        return Storage::url($this->file_path);
+        return route('school.students.documents.download', $this->id);
     }
 
     public function student(): BelongsTo

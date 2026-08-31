@@ -101,6 +101,7 @@ Route::middleware('auth')->group(function () {
             Route::resource('holidays', HolidayController::class)->except(['create', 'edit', 'show']);
             Route::resource('students', StudentController::class);
             Route::post('students/{student}/documents',        [StudentController::class, 'uploadDocument'])->name('students.documents.upload');
+            Route::get('students/documents/{document}/download', [StudentController::class, 'downloadDocument'])->name('students.documents.download');
             Route::delete('students/documents/{document}',     [StudentController::class, 'deleteDocument'])->name('students.documents.delete');
 
             // Exams
@@ -325,6 +326,7 @@ Route::middleware('auth')->group(function () {
             Route::resource('designations', DesignationController::class)->except(['create', 'edit', 'show']);
             Route::resource('staff',        StaffController::class);
             Route::post('staff/{staff}/documents',         [StaffController::class, 'uploadDocument'])->name('staff.documents.upload');
+            Route::get('staff/documents/{document}/download', [StaffController::class, 'downloadDocument'])->name('staff.documents.download');
             Route::delete('staff/documents/{document}',    [StaffController::class, 'deleteDocument'])->name('staff.documents.delete');
         });
 

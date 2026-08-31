@@ -196,12 +196,19 @@ class StudentController extends Controller
 
     public function uploadDocument(Request $request, Student $student): RedirectResponse
     {
+        if (! auth()->user()->hasRole('super-admin') && $student->school_id !== $this->getSchoolId()) {
+            abort(403, 'Unauthorized action.');
+        }
+
         $request->validate([
             'title' => 'required|string|max:150',
             'file'  => 'required|file|mimes:pdf,jpg,jpeg,png|max:5120',
         ]);
 
-        $path = $request->file('file')->store("students/{$student->id}/documents", 'private');
+        $path = $request->file('file')->store(
+            \App\Services\TenantStorage::studentDocumentPath($student->school_id, $student->id),
+            'private'
+        );
 
         StudentDocument::create([
             'school_id'  => $student->school_id,
@@ -215,9 +222,19 @@ class StudentController extends Controller
         return back()->with('success', 'Document uploaded.');
     }
 
+    public function downloadDocument(StudentDocument $document)
+    {
+        $isSuperAdmin = auth()->user()->hasRole('super-admin');
+        return \App\Services\TenantStorage::downloadPrivateDocument($document, $this->getSchoolId(), $isSuperAdmin);
+    }
+
     public function deleteDocument(StudentDocument $document): RedirectResponse
     {
-        Storage::disk('private')->delete($document->file_path);
+        if (! auth()->user()->hasRole('super-admin') && $document->school_id !== $this->getSchoolId()) {
+            abort(403, 'Unauthorized action.');
+        }
+
+        \App\Services\TenantStorage::privateDisk()->delete($document->file_path);
         $document->delete();
 
         return back()->with('success', 'Document deleted.');

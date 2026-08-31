@@ -21,9 +21,24 @@ class EnsureSchoolModule
      */
     public function handle(Request $request, Closure $next, string $module): Response
     {
-        $mode = strtolower(config('entitlement.mode', 'off'));
+        // 1. Validate module slug against canonical and core registry
+        $canonicalModules = config('modules.canonical', []);
+        $coreModules      = config('modules.core', ['dashboard', 'settings', 'integrations', 'admins']);
 
-        // 1. OFF Mode: Transparent pass-through
+        if (! in_array($module, $canonicalModules, true) && ! in_array($module, $coreModules, true)) {
+            throw new \InvalidArgumentException("Unknown or invalid module slug '{$module}'. Must be defined in config('modules.canonical') or config('modules.core').");
+        }
+
+        // 2. Validate entitlement mode
+        $rawMode = config('entitlement.mode', 'off');
+        $mode = $rawMode === null || $rawMode === '' ? 'off' : strtolower((string) $rawMode);
+
+        $allowedModes = ['off', 'observe', 'enforce'];
+        if (! in_array($mode, $allowedModes, true)) {
+            throw new \InvalidArgumentException("Invalid entitlement mode '{$rawMode}'. Supported modes are: " . implode(', ', $allowedModes));
+        }
+
+        // 3. OFF Mode: Transparent pass-through
         if ($mode === 'off') {
             return $next($request);
         }
@@ -41,7 +56,7 @@ class EnsureSchoolModule
             return $next($request);
         }
 
-        // 2. OBSERVE Mode: Log would-be denial and permit passage
+        // 4. OBSERVE Mode: Log would-be denial and permit passage
         if ($mode === 'observe') {
             $logChannel = config('entitlement.log_channel');
             $logger = $logChannel ? Log::channel($logChannel) : Log::getLogger();
@@ -62,7 +77,7 @@ class EnsureSchoolModule
             return $next($request);
         }
 
-        // 3. ENFORCE Mode: Fail-closed with HTTP 403
+        // 5. ENFORCE Mode: Fail-closed with HTTP 403
         if ($mode === 'enforce') {
             if ($request->expectsJson() || $request->header('X-Inertia')) {
                 abort(403, "Access to module '{$module}' is not active on your school plan ({$result->reason}).");
@@ -71,7 +86,7 @@ class EnsureSchoolModule
             abort(403, "Access to module '{$module}' is not active on your school plan.");
         }
 
-        // Default fallback: pass through
+        // Fallback
         return $next($request);
     }
 }

@@ -87,8 +87,29 @@ class SchoolEntitlementResolver
             return EntitlementResult::deny(EntitlementResult::SUBSCRIPTION_SUSPENDED, $schoolId, null, $latest->id, $latest->package_id, 'Subscription is suspended.');
         }
 
-        if ($latest->is_trial && $latest->trial_ends_at && $latest->trial_ends_at->toDateString() < $today) {
-            return EntitlementResult::deny(EntitlementResult::TRIAL_EXPIRED, $schoolId, null, $latest->id, $latest->package_id, 'Trial period has expired.');
+        // Trial subscriptions must have non-null trial_ends_at
+        if ($latest->status === 'trial' || $latest->is_trial) {
+            if (empty($latest->trial_ends_at)) {
+                return EntitlementResult::deny(
+                    EntitlementResult::INVALID_TRIAL_CONFIGURATION,
+                    $schoolId,
+                    null,
+                    $latest->id,
+                    $latest->package_id,
+                    'Trial subscription is invalid: trial_ends_at date is missing (null).'
+                );
+            }
+
+            if ($latest->trial_ends_at->toDateString() < $today) {
+                return EntitlementResult::deny(
+                    EntitlementResult::TRIAL_EXPIRED,
+                    $schoolId,
+                    null,
+                    $latest->id,
+                    $latest->package_id,
+                    'Trial period has expired.'
+                );
+            }
         }
 
         if ($latest->end_date && $latest->end_date->toDateString() < $today) {
@@ -107,8 +128,15 @@ class SchoolEntitlementResolver
      */
     public function checkModule(int|string|School $school, string $moduleSlug): EntitlementResult
     {
+        $canonicalModules = config('modules.canonical', []);
+        $coreModules      = config('modules.core', ['dashboard', 'settings', 'integrations', 'admins']);
+
+        // Validate module slug against canonical and core registry
+        if (! in_array($moduleSlug, $canonicalModules, true) && ! in_array($moduleSlug, $coreModules, true)) {
+            throw new \InvalidArgumentException("Unknown or invalid module '{$moduleSlug}'. Must be defined in config('modules.canonical') or config('modules.core').");
+        }
+
         // 1. Core / Unconditional features bypass
-        $coreModules = config('modules.core', ['dashboard', 'settings', 'integrations', 'admins']);
         if (in_array($moduleSlug, $coreModules, true)) {
             $schoolId = $this->resolveSchoolId($school);
             return EntitlementResult::allow(EntitlementResult::CORE_FEATURE, $schoolId, $moduleSlug, null, null, 'Core feature is unconditionally accessible.');
@@ -198,6 +226,14 @@ class SchoolEntitlementResolver
      */
     public function canAccessModule(?User $user, int|string|School|null $school, string $moduleSlug): EntitlementResult
     {
+        $canonicalModules = config('modules.canonical', []);
+        $coreModules      = config('modules.core', ['dashboard', 'settings', 'integrations', 'admins']);
+
+        // Validate module slug against canonical and core registry
+        if (! in_array($moduleSlug, $canonicalModules, true) && ! in_array($moduleSlug, $coreModules, true)) {
+            throw new \InvalidArgumentException("Unknown or invalid module '{$moduleSlug}'. Must be defined in config('modules.canonical') or config('modules.core').");
+        }
+
         // 1. Super Admin bypass
         if ($user && method_exists($user, 'hasRole') && $user->hasRole('super-admin')) {
             $schoolId = $school ? $this->resolveSchoolId($school) : null;
@@ -282,6 +318,7 @@ class SchoolEntitlementResolver
 
     /**
      * Query all valid subscription candidates for a school on current date.
+     * Trials require non-null trial_ends_at.
      */
     protected function getValidSubscriptionCandidates(int $schoolId)
     {
@@ -296,15 +333,13 @@ class SchoolEntitlementResolver
                          ->where('start_date', '<=', $today)
                          ->where('end_date', '>=', $today);
                 })
-                // OR Trial window
+                // OR Trial window (trial_ends_at MUST be non-null and >= today)
                 ->orWhere(function ($subQ) use ($today) {
                     $subQ->where('status', 'trial')
                          ->where('is_trial', true)
                          ->where('start_date', '<=', $today)
-                         ->where(function ($trialDateQ) use ($today) {
-                             $trialDateQ->whereNull('trial_ends_at')
-                                        ->orWhere('trial_ends_at', '>=', $today);
-                         });
+                         ->whereNotNull('trial_ends_at')
+                         ->where('trial_ends_at', '>=', $today);
                 });
             })
             ->get();

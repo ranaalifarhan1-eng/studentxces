@@ -273,4 +273,33 @@ class EnsureSchoolModuleMiddlewareTest extends TestCase
         $resAttendance = $this->actingAs($studentUser)->get('/school/student/attendance');
         $resAttendance->assertStatus(403);
     }
+
+    public function test_invalid_entitlement_mode_throws_invalid_argument_exception(): void
+    {
+        Config::set('entitlement.mode', 'enfore'); // Typo / invalid mode
+
+        $school = $this->createSchool('School Invalid Mode');
+        $user = User::factory()->create(['school_id' => $school->id]);
+        $user->assignRole('school-admin');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage("Invalid entitlement mode 'enfore'");
+
+        $this->withoutExceptionHandling()
+            ->actingAs($user)
+            ->get('/school/library/books');
+    }
+
+    public function test_invalid_module_slug_in_middleware_throws_invalid_argument_exception(): void
+    {
+        $middleware = app(\App\Http\Middleware\EnsureSchoolModule::class);
+        $request = \Illuminate\Http\Request::create('/school/some-route', 'GET');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage("Unknown or invalid module slug 'invalid-typo-slug'");
+
+        $middleware->handle($request, function () {
+            return response('OK');
+        }, 'invalid-typo-slug');
+    }
 }

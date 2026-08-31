@@ -252,7 +252,7 @@ class SchoolEntitlementResolverTest extends TestCase
         $this->assertEquals(EntitlementResult::SUBSCRIPTION_SUSPENDED, $result->reason);
     }
 
-    public function test_valid_trial_subscription_is_entitled(): void
+    public function test_valid_future_trial_subscription_is_entitled(): void
     {
         $school = $this->createSchool('School Valid Trial');
         $package = Package::create([
@@ -314,6 +314,78 @@ class SchoolEntitlementResolverTest extends TestCase
 
         $this->assertFalse($result->isEntitled);
         $this->assertEquals(EntitlementResult::TRIAL_EXPIRED, $result->reason);
+    }
+
+    public function test_trial_with_null_trial_ends_at_is_denied(): void
+    {
+        $school = $this->createSchool('School Null Trial Ends At');
+        $package = Package::create([
+            'name' => 'Trial Tier 3',
+            'slug' => 'trial-tier-3',
+            'price_monthly' => 0,
+            'price_yearly' => 0,
+            'max_students' => 100,
+            'max_staff' => 20,
+            'storage_gb' => 10,
+            'is_active' => true,
+        ]);
+        PackageModule::create(['package_id' => $package->id, 'module_slug' => 'exams']);
+
+        SchoolSubscription::create([
+            'school_id' => $school->id,
+            'package_id' => $package->id,
+            'start_date' => Carbon::yesterday(),
+            'end_date' => Carbon::now()->addDays(30),
+            'status' => 'trial',
+            'is_trial' => true,
+            'trial_ends_at' => null, // INVALID: null trial_ends_at must fail-closed
+            'amount_paid' => 0,
+        ]);
+
+        $result = $this->resolver->checkModule($school, 'exams');
+
+        $this->assertFalse($result->isEntitled);
+        $this->assertEquals(EntitlementResult::INVALID_TRIAL_CONFIGURATION, $result->reason);
+    }
+
+    public function test_subscription_with_future_start_date_is_denied(): void
+    {
+        $school = $this->createSchool('School Future Start Date');
+        $package = Package::create([
+            'name' => 'Future Tier',
+            'slug' => 'future-tier',
+            'price_monthly' => 20,
+            'price_yearly' => 200,
+            'max_students' => 100,
+            'max_staff' => 20,
+            'storage_gb' => 10,
+            'is_active' => true,
+        ]);
+        PackageModule::create(['package_id' => $package->id, 'module_slug' => 'fees']);
+
+        SchoolSubscription::create([
+            'school_id' => $school->id,
+            'package_id' => $package->id,
+            'start_date' => Carbon::now()->addDays(5), // Future start date
+            'end_date' => Carbon::now()->addDays(35),
+            'status' => 'active',
+            'amount_paid' => 20,
+        ]);
+
+        $result = $this->resolver->checkModule($school, 'fees');
+
+        $this->assertFalse($result->isEntitled);
+        $this->assertEquals(EntitlementResult::SUBSCRIPTION_NOT_STARTED, $result->reason);
+    }
+
+    public function test_unknown_module_slug_throws_invalid_argument_exception(): void
+    {
+        $school = $this->createSchool('School Unknown Slug');
+
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage("Unknown or invalid module 'nonexistent_module_slug'");
+
+        $this->resolver->checkModule($school, 'nonexistent_module_slug');
     }
 
     public function test_multiple_simultaneously_valid_subscriptions_produces_ambiguous_result(): void

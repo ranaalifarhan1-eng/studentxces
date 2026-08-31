@@ -56,6 +56,11 @@ class HandleInertiaRequests extends Middleware
                 $path = PlatformSetting::get('platform_favicon');
                 return $path ? asset('storage/' . $path) : null;
             }),
+            'entitlement' => fn () => $request->user()?->school_id ? [
+                'mode'                => config('entitlement.mode', 'off'),
+                'subscription_active' => app(\App\Services\SchoolEntitlementResolver::class)->hasActiveSubscription($request->user()->school_id),
+                'effective_modules'   => app(\App\Services\SchoolEntitlementResolver::class)->getEffectiveModules($request->user()->school_id),
+            ] : null,
         ];
     }
 }

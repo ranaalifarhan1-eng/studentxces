@@ -19,6 +19,11 @@ class PackageController extends Controller
         'homework', 'communication', 'reports', 'hr',
     ];
 
+    public static function availableModules(): array
+    {
+        return config('modules.canonical', self::AVAILABLE_MODULES);
+    }
+
     public function index(): Response
     {
         $packages = Package::withTrashed(false)
@@ -29,12 +34,13 @@ class PackageController extends Controller
 
         return Inertia::render('SuperAdmin/Packages/Index', [
             'packages'         => $packages,
-            'availableModules' => self::AVAILABLE_MODULES,
+            'availableModules' => self::availableModules(),
         ]);
     }
 
     public function store(Request $request): RedirectResponse
     {
+        $availableModules = self::availableModules();
         $data = $request->validate([
             'name'          => 'required|string|max:100',
             'description'   => 'nullable|string|max:500',
@@ -45,7 +51,7 @@ class PackageController extends Controller
             'storage_gb'    => 'required|integer|min:1',
             'is_active'     => 'boolean',
             'modules'       => 'array',
-            'modules.*'     => 'string|in:' . implode(',', self::AVAILABLE_MODULES),
+            'modules.*'     => 'string|in:' . implode(',', $availableModules),
         ]);
 
         $package = Package::create([
@@ -69,6 +75,7 @@ class PackageController extends Controller
 
     public function update(Request $request, Package $package): RedirectResponse
     {
+        $availableModules = self::availableModules();
         $data = $request->validate([
             'name'          => 'required|string|max:100',
             'description'   => 'nullable|string|max:500',
@@ -79,7 +86,7 @@ class PackageController extends Controller
             'storage_gb'    => 'required|integer|min:1',
             'is_active'     => 'boolean',
             'modules'       => 'array',
-            'modules.*'     => 'string|in:' . implode(',', self::AVAILABLE_MODULES),
+            'modules.*'     => 'string|in:' . implode(',', $availableModules),
         ]);
 
         $package->update([

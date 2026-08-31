@@ -18,12 +18,18 @@ class ModuleManagerController extends Controller
         'homework', 'communication', 'reports', 'hr',
     ];
 
+    public static function allModules(): array
+    {
+        return config('modules.canonical', self::ALL_MODULES);
+    }
+
     public function index(Request $request): Response
     {
         $schools = School::select('id', 'name', 'status')->orderBy('name')->get();
 
         $selectedSchool = null;
         $modules = [];
+        $allModules = self::allModules();
 
         if ($request->school_id) {
             $selectedSchool = School::findOrFail($request->school_id);
@@ -31,7 +37,7 @@ class ModuleManagerController extends Controller
                 ->pluck('is_enabled', 'module_slug')
                 ->toArray();
 
-            foreach (self::ALL_MODULES as $slug) {
+            foreach ($allModules as $slug) {
                 $modules[] = [
                     'slug'       => $slug,
                     'label'      => ucwords(str_replace('_', ' ', $slug)),
@@ -44,16 +50,17 @@ class ModuleManagerController extends Controller
             'schools'        => $schools,
             'selectedSchool' => $selectedSchool,
             'modules'        => $modules,
-            'allModules'     => self::ALL_MODULES,
+            'allModules'     => $allModules,
             'filters'        => $request->only(['school_id']),
         ]);
     }
 
     public function toggle(Request $request): RedirectResponse
     {
+        $allModules = self::allModules();
         $data = $request->validate([
             'school_id'   => 'required|integer|exists:schools,id',
-            'module_slug' => 'required|string|in:' . implode(',', self::ALL_MODULES),
+            'module_slug' => 'required|string|in:' . implode(',', $allModules),
             'is_enabled'  => 'required|boolean',
         ]);
 
@@ -67,6 +74,7 @@ class ModuleManagerController extends Controller
 
     public function bulkSave(Request $request): RedirectResponse
     {
+        $allModules = self::allModules();
         $data = $request->validate([
             'school_id' => 'required|integer|exists:schools,id',
             'modules'   => 'required|array',
@@ -74,7 +82,7 @@ class ModuleManagerController extends Controller
         ]);
 
         foreach ($data['modules'] as $slug => $enabled) {
-            if (!in_array($slug, self::ALL_MODULES)) continue;
+            if (!in_array($slug, $allModules)) continue;
             SchoolModule::updateOrCreate(
                 ['school_id' => $data['school_id'], 'module_slug' => $slug],
                 ['is_enabled' => (bool) $enabled],

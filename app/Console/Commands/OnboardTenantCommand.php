@@ -21,17 +21,34 @@ class OnboardTenantCommand extends Command
         {--language= : Language code (default: en)}
         {--admin-name= : Initial School Admin full name}
         {--admin-email= : Initial School Admin login email}
-        {--admin-password= : Initial School Admin password (min 8 chars)}
         {--academic-year-name= : Initial academic year name (e.g. 2026-2027)}
         {--academic-start= : Academic year start date (YYYY-MM-DD)}
         {--academic-end= : Academic year end date (YYYY-MM-DD)}
         {--execute : Commit onboarding mutations to the database}
-        {--dry-run : Perform validation and simulation without database mutations}';
+        {--dry-run : Perform validation and simulation without database mutations}
+        {--reconcile= : Reconcile a pending onboarding manifest file}';
 
     protected $description = 'Safely and transactionally onboard a new tenant foundation (School, School Admin, Academic Year)';
 
     public function handle(TenantOnboardingService $service): int
     {
+        // Manifest reconciliation option
+        $reconcilePath = $this->option('reconcile');
+        if ($reconcilePath) {
+            $this->info("Reconciling manifest: {$reconcilePath}");
+            $res = $service->reconcileManifest($reconcilePath);
+            if (in_array($res['status'], ['RECONCILED', 'ALREADY_COMMITTED'])) {
+                $this->info("✓ [{$res['status']}] {$res['message']}");
+                if (! empty($res['school_id'])) {
+                    $this->line("SCHOOL_ID={$res['school_id']}");
+                }
+                return self::SUCCESS;
+            }
+
+            $this->error("⨯ [{$res['status']}] {$res['message']}");
+            return self::FAILURE;
+        }
+
         $execute = (bool) $this->option('execute');
         $dryRun = (bool) $this->option('dry-run');
 
@@ -53,7 +70,6 @@ class OnboardTenantCommand extends Command
             'language'           => $this->option('language'),
             'admin_name'         => $this->option('admin-name'),
             'admin_email'        => $this->option('admin-email'),
-            'admin_password'     => $this->option('admin-password'),
             'academic_year_name' => $this->option('academic-year-name'),
             'academic_start'     => $this->option('academic-start'),
             'academic_end'       => $this->option('academic-end'),
@@ -66,7 +82,7 @@ class OnboardTenantCommand extends Command
 
         $prepared = $service->prepareData($input);
 
-        // Render configuration summary with masked password
+        // Render configuration summary
         $this->table(['Parameter', 'Configured Value'], [
             ['School Name', $prepared['name'] ?: '<fg=red>[MISSING]</>'],
             ['School Slug', $prepared['slug'] ?: '<fg=red>[MISSING]</>'],
@@ -77,15 +93,24 @@ class OnboardTenantCommand extends Command
             ['Currency / Language', "{$prepared['currency']} / {$prepared['language']}"],
             ['Admin Name', $prepared['admin_name'] ?: '<fg=red>[MISSING]</>'],
             ['Admin Email', $prepared['admin_email'] ?: '<fg=red>[MISSING]</>'],
-            ['Admin Password Supplied', ! empty($prepared['admin_password']) ? '<fg=green>YES</>' : '<fg=red>NO</>'],
+            ['Admin Password', $execute ? '<fg=yellow>PROMPTING SECURELY</>' : '<fg=cyan>WILL BE REQUESTED SECURELY DURING EXECUTION</>'],
             ['Academic Year', $prepared['academic_year_name'] ?: '<fg=red>[MISSING]</>'],
             ['Academic Period', ($prepared['academic_start'] && $prepared['academic_end']) ? "{$prepared['academic_start']} to {$prepared['academic_end']}" : '<fg=red>[MISSING]</>'],
         ]);
 
+        if ($execute) {
+            $password = $this->secret('Enter initial School Admin temporary password (min 8 chars):');
+            if (empty($password) || strlen($password) < 8) {
+                $this->error('Error: School Admin password is required and must be at least 8 characters.');
+                return self::FAILURE;
+            }
+            $input['admin_password'] = $password;
+        }
+
         try {
             $result = $service->onboard($input, $execute);
         } catch (\Throwable $e) {
-            $this->error("Onboarding transaction failed and rolled back: {$e->getMessage()}");
+            $this->error("Onboarding transaction failed and rolled back.");
             return self::FAILURE;
         }
 
@@ -101,11 +126,11 @@ class OnboardTenantCommand extends Command
             $this->newLine();
             $this->info('✓ Pre-validation PASSED.');
             $this->comment('Simulation complete. Zero database mutations were performed.');
-            $this->line('To create this tenant foundation, re-run with: <fg=yellow>--execute</>');
+            $this->line('To commit this tenant foundation, re-run with: <fg=yellow>--execute</>');
             return self::SUCCESS;
         }
 
-        if ($result['status'] === 'FOUNDATION_CREATED') {
+        if ($result['status'] === 'FOUNDATION_CREATED' || $result['status'] === 'DB_COMMITTED_JOURNAL_INCOMPLETE') {
             $this->newLine();
             $this->info('====================================================');
             $this->info('   TENANT FOUNDATION COMMITTED SUCCESSFULLY');
@@ -116,6 +141,9 @@ class OnboardTenantCommand extends Command
             $this->line("SCHOOL_NAME={$result['school_name']}");
             $this->line("SCHOOL_SLUG={$result['school_slug']}");
             $this->line("ADMIN_EMAIL={$result['admin_email']}");
+            if ($result['status'] === 'DB_COMMITTED_JOURNAL_INCOMPLETE') {
+                $this->warn("Note: DB committed successfully, but manifest journal update was incomplete. Safe to reconcile with --reconcile={$result['manifest_file']}");
+            }
             $this->newLine();
             $this->comment('Next Step: Review commercial entitlement via dry-run:');
             $this->line("<fg=cyan>{$result['next_step']}</>");

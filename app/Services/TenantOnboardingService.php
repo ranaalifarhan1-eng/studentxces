@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
-use Illuminate\Validation\ValidationException;
+use Spatie\Permission\Models\Role;
 
 class TenantOnboardingService
 {
@@ -55,9 +55,9 @@ class TenantOnboardingService
     /**
      * Validate all onboarding inputs before executing database mutations.
      */
-    public function validate(array $data): \Illuminate\Contracts\Validation\Validator
+    public function validate(array $data, bool $requirePassword = false): \Illuminate\Contracts\Validation\Validator
     {
-        return Validator::make($data, [
+        $rules = [
             'name'               => ['required', 'string', 'max:255'],
             'slug'               => ['required', 'string', 'max:100', 'unique:schools,slug'],
             'email'              => ['nullable', 'email', 'max:255'],
@@ -66,21 +66,41 @@ class TenantOnboardingService
             'city'               => ['nullable', 'string', 'max:100'],
             'state'              => ['nullable', 'string', 'max:100'],
             'country'            => ['required', 'string', 'size:2'],
-            'timezone'           => ['required', 'string', 'max:50'],
+            'timezone'           => ['required', 'string', 'max:50', 'timezone'],
             'currency'           => ['required', 'string', 'max:10'],
             'language'           => ['required', 'string', 'max:10'],
             'status'             => ['required', 'in:active,inactive,suspended'],
             'admin_name'         => ['required', 'string', 'max:255'],
             'admin_email'        => ['required', 'email', 'max:255', 'unique:users,email'],
-            'admin_password'     => ['required', 'string', 'min:8'],
             'academic_year_name' => ['required', 'string', 'max:50'],
             'academic_start'     => ['required', 'date_format:Y-m-d'],
             'academic_end'       => ['required', 'date_format:Y-m-d', 'after:academic_start'],
-        ], [
+        ];
+
+        if ($requirePassword) {
+            $rules['admin_password'] = ['required', 'string', 'min:8'];
+        }
+
+        $validator = Validator::make($data, $rules, [
             'academic_end.after' => 'The academic year end date must be after the start date.',
             'slug.unique'        => "A school with slug '{$data['slug']}' already exists.",
             'admin_email.unique' => "A user with email '{$data['admin_email']}' already exists.",
+            'timezone.timezone'  => "The timezone '{$data['timezone']}' is not a valid IANA timezone identifier.",
         ]);
+
+        // Custom validation check: Duplicate School Name/Identity
+        $validator->after(function ($v) use ($data) {
+            if (! empty($data['name']) && School::where('name', $data['name'])->exists()) {
+                $v->errors()->add('name', "A school with the name '{$data['name']}' already exists.");
+            }
+
+            // Prerequisite role check: school-admin must exist
+            if (! Role::where('name', 'school-admin')->where('guard_name', 'web')->exists()) {
+                $v->errors()->add('admin_role', "Required platform role 'school-admin' does not exist.");
+            }
+        });
+
+        return $validator;
     }
 
     /**
@@ -89,7 +109,7 @@ class TenantOnboardingService
     public function onboard(array $rawInput, bool $execute = false): array
     {
         $data = $this->prepareData($rawInput);
-        $validator = $this->validate($data);
+        $validator = $this->validate($data, $execute);
 
         if ($validator->fails()) {
             return [
@@ -103,10 +123,10 @@ class TenantOnboardingService
         // Dry-run / Simulation mode: Zero database mutations
         if (! $execute) {
             return [
-                'status'  => 'DRY_RUN',
-                'message' => 'Dry run validation succeeded. No database mutations performed.',
-                'payload' => $this->sanitizePayload($data),
-                'next_step' => 'Execute with --execute to commit foundation.',
+                'status'    => 'DRY_RUN',
+                'message'   => 'Dry run validation succeeded. No database mutations performed.',
+                'payload'   => $this->sanitizePayload($data),
+                'next_step' => 'Execute with --execute to commit foundation (temporary password will be prompted securely).',
             ];
         }
 
@@ -189,8 +209,24 @@ class TenantOnboardingService
                 ];
             });
 
+            // Post-commit manifest finalization
             $manifest['status'] = 'COMMITTED';
-            $this->writeManifest($manifestFilename, $manifest);
+            $writeOk = $this->writeManifest($manifestFilename, $manifest);
+
+            if (! $writeOk) {
+                return [
+                    'status'           => 'DB_COMMITTED_JOURNAL_INCOMPLETE',
+                    'message'          => "Tenant foundation committed in DB, but manifest journal update was incomplete.",
+                    'school_id'        => $result['school']->id,
+                    'school_name'      => $result['school']->name,
+                    'school_slug'      => $result['school']->slug,
+                    'admin_user_id'    => $result['admin_user']->id,
+                    'admin_email'      => $result['admin_user']->email,
+                    'academic_year_id' => $result['academic_year']->id,
+                    'manifest_file'    => $manifestFilename,
+                    'next_step'        => "Run: php artisan entitlement:provision-legacy --school={$result['school']->id} --dry-run",
+                ];
+            }
 
             return [
                 'status'           => 'FOUNDATION_CREATED',
@@ -206,11 +242,107 @@ class TenantOnboardingService
             ];
         } catch (\Throwable $e) {
             $manifest['status'] = 'FAILED_ROLLED_BACK';
-            $manifest['error'] = $e->getMessage();
+            $manifest['error'] = 'Database transaction failed and rolled back.';
             $this->writeManifest($manifestFilename, $manifest);
 
             throw $e;
         }
+    }
+
+    /**
+     * Reconciles an incomplete or PENDING onboarding manifest against database state.
+     */
+    public function reconcileManifest(string $manifestPath): array
+    {
+        $disk = Storage::disk(config()->has('filesystems.disks.private') ? 'private' : 'local');
+
+        if (! $disk->exists($manifestPath)) {
+            return [
+                'status'  => 'MANIFEST_NOT_FOUND',
+                'message' => "Manifest file '{$manifestPath}' does not exist.",
+            ];
+        }
+
+        $raw = $disk->get($manifestPath);
+        $manifest = json_decode($raw, true);
+
+        if (! is_array($manifest)) {
+            return [
+                'status'  => 'INVALID_MANIFEST_FORMAT',
+                'message' => 'Manifest JSON is malformed or unreadable.',
+            ];
+        }
+
+        if (($manifest['status'] ?? '') === 'COMMITTED') {
+            return [
+                'status'        => 'ALREADY_COMMITTED',
+                'message'       => 'Manifest is already fully committed.',
+                'school_id'     => $manifest['school_id'] ?? null,
+                'admin_user_id' => $manifest['admin_user_id'] ?? null,
+            ];
+        }
+
+        if (($manifest['status'] ?? '') !== 'PENDING') {
+            return [
+                'status'  => 'NON_RECONCILABLE_STATUS',
+                'message' => "Manifest status '{$manifest['status']}' cannot be automatically reconciled.",
+            ];
+        }
+
+        // Look for existing School, User, and AcademicYear
+        $schoolSlug = $manifest['school_slug'] ?? null;
+        $adminEmail = $manifest['admin_email'] ?? null;
+        $academicName = $manifest['academic_year_name'] ?? null;
+
+        if (! $schoolSlug || ! $adminEmail) {
+            return [
+                'status'  => 'INSUFFICIENT_METADATA',
+                'message' => 'Manifest lacks required school_slug or admin_email for reconciliation.',
+            ];
+        }
+
+        $school = School::where('slug', $schoolSlug)->whereNull('deleted_at')->first();
+        $adminUser = User::where('email', $adminEmail)->whereNull('deleted_at')->first();
+
+        // If none exist, safe to retry onboarding
+        if (! $school && ! $adminUser) {
+            return [
+                'status'  => 'RETRYABLE_NOT_FOUND',
+                'message' => 'Zero database records exist matching this manifest. Safe to retry onboarding.',
+            ];
+        }
+
+        // Both must exist and be consistently linked
+        if ($school && $adminUser && (int) $adminUser->school_id === (int) $school->id) {
+            $academicYear = AcademicYear::where('school_id', $school->id)
+                ->where('name', $academicName)
+                ->whereNull('deleted_at')
+                ->first();
+
+            if ($academicYear) {
+                // Promote to COMMITTED
+                $manifest['status'] = 'COMMITTED';
+                $manifest['school_id'] = $school->id;
+                $manifest['admin_user_id'] = $adminUser->id;
+                $manifest['academic_year_id'] = $academicYear->id;
+                $manifest['reconciled_at'] = now()->toIso8601String();
+
+                $this->writeManifest($manifestPath, $manifest);
+
+                return [
+                    'status'           => 'RECONCILED',
+                    'message'          => 'Pending manifest successfully reconciled to committed database foundation.',
+                    'school_id'        => $school->id,
+                    'admin_user_id'    => $adminUser->id,
+                    'academic_year_id' => $academicYear->id,
+                ];
+            }
+        }
+
+        return [
+            'status'  => 'AMBIGUOUS_MANUAL_REVIEW_REQUIRED',
+            'message' => 'Partial or conflicting records found in database. Manual operator review required.',
+        ];
     }
 
     /**
@@ -219,21 +351,21 @@ class TenantOnboardingService
     public function sanitizePayload(array $data): array
     {
         $sanitized = $data;
-        $sanitized['admin_password_supplied'] = ! empty($data['admin_password']) ? 'YES' : 'NO';
+        $sanitized['admin_password_supplied'] = ! empty($data['admin_password']) ? 'YES' : 'WILL BE REQUESTED SECURELY DURING EXECUTION';
         unset($sanitized['admin_password']);
         return $sanitized;
     }
 
     /**
-     * Safely writes manifest to private storage.
+     * Safely writes manifest to private storage. Returns boolean success.
      */
-    protected function writeManifest(string $filename, array $content): void
+    public function writeManifest(string $filename, array $content): bool
     {
         try {
             $disk = Storage::disk(config()->has('filesystems.disks.private') ? 'private' : 'local');
-            $disk->put($filename, json_encode($content, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            return (bool) $disk->put($filename, json_encode($content, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
         } catch (\Throwable) {
-            // Silently ignore filesystem error in test environments where private disk is mocked
+            return false;
         }
     }
 }

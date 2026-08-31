@@ -378,13 +378,17 @@ class TenantOnboardingTest extends TestCase
             ->expectsOutputToContain('RECONCILED')
             ->assertExitCode(0);
 
-        // Assert file updated to COMMITTED
+        // Assert file updated to COMMITTED with exact IDs
         $saved = json_decode($disk->get($manifestPath), true);
         $this->assertEquals('COMMITTED', $saved['status']);
+        $this->assertEquals($school->id, $saved['school_id']);
+        $this->assertEquals($admin->id, $saved['admin_user_id']);
+        $this->assertEquals($year->id, $saved['academic_year_id']);
 
         // Idempotent check: Re-reconciling returns ALREADY_COMMITTED
         $idempotentResult = $service->reconcileManifest($manifestFilename);
         $this->assertEquals('ALREADY_COMMITTED', $idempotentResult['status']);
+        $this->assertEquals($school->id, $idempotentResult['school_id']);
     }
 
     public function test_reconciliation_rejects_path_traversal_and_outside_paths(): void
@@ -470,6 +474,84 @@ class TenantOnboardingTest extends TestCase
 
         $result = $service->reconcileManifest($manifestFilename);
         $this->assertEquals('AMBIGUOUS_MANUAL_REVIEW_REQUIRED', $result['status']);
+    }
+
+    public function test_service_transaction_rolls_back_school_if_admin_creation_fails(): void
+    {
+        $service = app(TenantOnboardingService::class);
+        $disk = Storage::disk(config()->has('filesystems.disks.private') ? 'private' : 'local');
+
+        // Force a failure during user creation by setting up an invalid role state inside transaction
+        // or hooking into User creation
+        User::creating(function () {
+            throw new \RuntimeException('Simulated User Creation Failure');
+        });
+
+        $caught = false;
+        try {
+            $service->onboard([
+                'name'                => 'Rollback School',
+                'slug'                => 'rollback-school',
+                'admin_name'          => 'Admin Name',
+                'admin_email'         => 'admin@rollback.test',
+                'admin_password'      => 'Password123!',
+                'academic_year_name'  => '2026-2027',
+                'academic_start'      => '2026-08-01',
+                'academic_end'        => '2027-06-30',
+            ], true);
+        } catch (\Throwable $e) {
+            $caught = true;
+            $this->assertEquals('Simulated User Creation Failure', $e->getMessage());
+        }
+
+        $this->assertTrue($caught);
+
+        // School must be rolled back (zero partial foundation)
+        $this->assertEquals(0, School::count());
+        $this->assertEquals(0, User::count());
+        $this->assertEquals(0, AcademicYear::count());
+
+        // Manifest must be FAILED_ROLLED_BACK
+        $manifests = $disk->files('onboarding_manifests');
+        $this->assertNotEmpty($manifests);
+        $manifestContent = json_decode($disk->get($manifests[0]), true);
+        $this->assertEquals('FAILED_ROLLED_BACK', $manifestContent['status']);
+    }
+
+    public function test_db_commit_succeeds_but_journal_finalization_failure_preserves_db_foundation(): void
+    {
+        // Mock service writeManifest on second call (post-commit) to return false
+        $service = new class extends TenantOnboardingService {
+            public int $writeCount = 0;
+            public function writeManifest(string $filename, array $content): bool
+            {
+                $this->writeCount++;
+                if ($this->writeCount === 1) {
+                    // First call: PENDING manifest
+                    return parent::writeManifest($filename, $content);
+                }
+                // Second call: simulate filesystem finalization failure
+                return false;
+            }
+        };
+
+        $result = $service->onboard([
+            'name'                => 'Preserved School',
+            'slug'                => 'preserved-school',
+            'admin_name'          => 'Preserved Admin',
+            'admin_email'         => 'preserved@example.com',
+            'admin_password'      => 'Password123!',
+            'academic_year_name'  => '2026-2027',
+            'academic_start'      => '2026-08-01',
+            'academic_end'        => '2027-06-30',
+        ], true);
+
+        $this->assertEquals('DB_COMMITTED_JOURNAL_INCOMPLETE', $result['status']);
+
+        // DB foundation is preserved!
+        $this->assertEquals(1, School::count());
+        $this->assertEquals(1, User::count());
+        $this->assertEquals(1, AcademicYear::count());
     }
 
     public function test_onboarding_does_not_affect_demo_tenants(): void

@@ -10,6 +10,7 @@ use App\Services\LegacyEntitlementProvisioner;
 use App\Services\SchoolEntitlementResolver;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Tests\TestCase;
 
@@ -98,7 +99,7 @@ class LegacyEntitlementProvisioningTest extends TestCase
         $this->assertEmpty($journalFiles, 'Dry-run must not create any journal manifest files.');
     }
 
-    public function test_provisioning_creates_journal_manifest_on_successful_execution(): void
+    public function test_provisioning_creates_committed_journal_manifest_on_successful_execution(): void
     {
         $school = $this->createSchool('School Journaled Target');
 
@@ -112,10 +113,83 @@ class LegacyEntitlementProvisioningTest extends TestCase
         $this->assertCount(1, $journalFiles);
 
         $journalContent = json_decode(File::get($journalFiles[0]->getRealPath()), true);
+        $this->assertEquals('COMMITTED', $journalContent['state']);
         $this->assertEquals($school->id, $journalContent['school_id']);
         $this->assertEquals($result['subscription_id'], $journalContent['created_subscription_id']);
         $this->assertEquals('PROVISIONED', $journalContent['action_result']);
         $this->assertEquals('ALLOWED', $journalContent['resulting_subscription_state']);
+        $this->assertNotNull($journalContent['committed_at']);
+
+        // Validate consistency via validateJournalManifest
+        $validation = $this->provisioner->validateJournalManifest($journalFiles[0]->getRealPath());
+        $this->assertTrue($validation['is_valid']);
+    }
+
+    public function test_db_failure_during_provisioning_marks_manifest_as_failed_rolled_back(): void
+    {
+        $school = $this->createSchool('School DB Failure');
+
+        // Create a mock/subclass or temporary hook to simulate DB exception during SchoolSubscription::create
+        // We can simulate this by putting an invalid foreign key or simulating an exception in a listener
+        $journalDir = storage_path('app/private/entitlement_manifests');
+
+        SchoolSubscription::saving(function () {
+            throw new \RuntimeException("Simulated database connection crash during subscription creation.");
+        });
+
+        try {
+            $this->provisioner->provisionSchool($school);
+            $this->fail("Expected RuntimeException was not thrown.");
+        } catch (\RuntimeException $e) {
+            $this->assertEquals("Simulated database connection crash during subscription creation.", $e->getMessage());
+        }
+
+        // Verify DB rolled back (zero subscriptions)
+        $this->assertEquals(0, SchoolSubscription::count());
+
+        // Verify manifest file on disk is marked FAILED_ROLLED_BACK (NOT COMMITTED)
+        $journalFiles = File::files($journalDir);
+        $this->assertCount(1, $journalFiles);
+
+        $journalContent = json_decode(File::get($journalFiles[0]->getRealPath()), true);
+        $this->assertEquals('FAILED_ROLLED_BACK', $journalContent['state']);
+        $this->assertEquals('FAILED', $journalContent['action_result']);
+        $this->assertNull($journalContent['created_subscription_id']);
+        $this->assertStringContainsString('Simulated database connection crash', $journalContent['error_message']);
+
+        // Assert validateJournalManifest rejects this manifest
+        $validation = $this->provisioner->validateJournalManifest($journalFiles[0]->getRealPath());
+        $this->assertFalse($validation['is_valid']);
+        $this->assertEquals('INCOMPLETE_OR_FAILED_STATE', $validation['reason']);
+    }
+
+    public function test_validate_journal_manifest_rejects_tampered_or_stale_data(): void
+    {
+        $school = $this->createSchool('School Tamper Test');
+        $res = $this->provisioner->provisionSchool($school);
+
+        $journalDir = storage_path('app/private/entitlement_manifests');
+        $journalFiles = File::files($journalDir);
+        $manifestPath = $journalFiles[0]->getRealPath();
+        $manifest = json_decode(File::get($manifestPath), true);
+
+        // 1. Valid original
+        $this->assertTrue($this->provisioner->validateJournalManifest($manifest)['is_valid']);
+
+        // 2. Tampered school ID
+        $tamperedSchool = $manifest;
+        $tamperedSchool['school_id'] = 99999;
+        $this->assertFalse($this->provisioner->validateJournalManifest($tamperedSchool)['is_valid']);
+
+        // 3. Tampered subscription ID
+        $tamperedSub = $manifest;
+        $tamperedSub['created_subscription_id'] = 99999;
+        $this->assertFalse($this->provisioner->validateJournalManifest($tamperedSub)['is_valid']);
+
+        // 4. Tampered date
+        $tamperedDate = $manifest;
+        $tamperedDate['start_date'] = '1999-01-01';
+        $this->assertFalse($this->provisioner->validateJournalManifest($tamperedDate)['is_valid']);
     }
 
     public function test_repeated_provisioning_is_strictly_idempotent(): void

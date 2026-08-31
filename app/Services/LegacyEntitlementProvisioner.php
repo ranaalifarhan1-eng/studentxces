@@ -202,41 +202,55 @@ class LegacyEntitlementProvisioner
             ];
         }
 
-        // Execute Provisioning atomically inside a DB transaction
-        return DB::transaction(function () use ($school, $schoolId, $startDate, $endDate, $status, $amountPaid) {
-            $package = $this->getOrCreateLegacyPackage();
+        // Phase 1: Initialize Two-Phase Manifest in PENDING state on disk
+        $package = $this->getOrCreateLegacyPackage();
+        $executionId = (string) Str::uuid();
 
-            $subscription = SchoolSubscription::create([
-                'school_id'      => $schoolId,
-                'package_id'     => $package->id,
-                'coupon_id'      => null,
-                'start_date'     => $startDate->toDateString(),
-                'end_date'       => $endDate->toDateString(),
-                'status'         => $status,
-                'is_trial'       => $status === 'trial',
-                'trial_ends_at'  => $status === 'trial' ? $endDate->toDateString() : null,
-                'amount_paid'    => $amountPaid,
-                'payment_method' => 'internal_legacy',
-                'notes'          => 'Provisioned by legacy entitlement tooling.',
-            ]);
+        $journalData = [
+            'execution_id'                => $executionId,
+            'state'                       => 'PENDING',
+            'created_at'                  => Carbon::now()->toIso8601String(),
+            'committed_at'                => null,
+            'school_id'                   => $schoolId,
+            'school_name'                 => $school->name,
+            'package_id'                  => $package->id,
+            'package_name'                => $package->name,
+            'created_subscription_id'     => null,
+            'previous_subscription_state' => 'NO_ACTIVE_SUBSCRIPTION',
+            'resulting_subscription_state'=> null,
+            'start_date'                  => $startDate->toDateString(),
+            'end_date'                    => $endDate->toDateString(),
+            'action_result'               => 'PENDING',
+        ];
 
-            // Write provisioning journal record
-            $journalData = [
-                'execution_id'                => (string) Str::uuid(),
-                'timestamp'                   => Carbon::now()->toIso8601String(),
-                'school_id'                   => $schoolId,
-                'school_name'                 => $school->name,
-                'package_id'                  => $package->id,
-                'package_name'                => $package->name,
-                'created_subscription_id'     => $subscription->id,
-                'previous_subscription_state' => 'NO_ACTIVE_SUBSCRIPTION',
-                'resulting_subscription_state'=> 'ALLOWED',
-                'start_date'                  => $startDate->toDateString(),
-                'end_date'                    => $endDate->toDateString(),
-                'action_result'               => 'PROVISIONED',
-            ];
+        $journalPath = $this->writeJournal($journalData);
 
-            $this->writeJournal($journalData);
+        // Phase 2: Execute Database Mutation
+        try {
+            $subscription = DB::transaction(function () use ($schoolId, $package, $startDate, $endDate, $status, $amountPaid) {
+                return SchoolSubscription::create([
+                    'school_id'      => $schoolId,
+                    'package_id'     => $package->id,
+                    'coupon_id'      => null,
+                    'start_date'     => $startDate->toDateString(),
+                    'end_date'       => $endDate->toDateString(),
+                    'status'         => $status,
+                    'is_trial'       => $status === 'trial',
+                    'trial_ends_at'  => $status === 'trial' ? $endDate->toDateString() : null,
+                    'amount_paid'    => $amountPaid,
+                    'payment_method' => 'internal_legacy',
+                    'notes'          => 'Provisioned by legacy entitlement tooling.',
+                ]);
+            });
+
+            // Phase 3: Finalize Manifest to COMMITTED state on successful DB commit
+            $journalData['state']                        = 'COMMITTED';
+            $journalData['committed_at']                 = Carbon::now()->toIso8601String();
+            $journalData['created_subscription_id']      = $subscription->id;
+            $journalData['resulting_subscription_state'] = 'ALLOWED';
+            $journalData['action_result']                = 'PROVISIONED';
+
+            $this->writeJournal($journalData, $journalPath);
 
             return [
                 'status'          => 'PROVISIONED',
@@ -248,25 +262,96 @@ class LegacyEntitlementProvisioner
                 'start_date'      => $startDate->toDateString(),
                 'end_date'        => $endDate->toDateString(),
                 'modules_count'   => $package->modules->count(),
-                'journal_id'      => $journalData['execution_id'],
+                'journal_id'      => $executionId,
                 'message'         => "Successfully provisioned Legacy All Access subscription (#{$subscription->id}).",
             ];
-        });
+        } catch (\Throwable $e) {
+            // DB Transaction Failed / Rolled Back: Update manifest state to FAILED_ROLLED_BACK
+            $journalData['state']         = 'FAILED_ROLLED_BACK';
+            $journalData['action_result'] = 'FAILED';
+            $journalData['failed_at']     = Carbon::now()->toIso8601String();
+            $journalData['error_message'] = $e->getMessage();
+
+            $this->writeJournal($journalData, $journalPath);
+
+            throw $e;
+        }
     }
 
     /**
-     * Write an audit journal file to private storage.
+     * Validate the consistency and authenticity of a journal manifest.
      */
-    protected function writeJournal(array $data): void
+    public function validateJournalManifest(string|array $manifest): array
+    {
+        $data = is_string($manifest) ? json_decode(File::get($manifest), true) : $manifest;
+
+        if (! is_array($data)) {
+            return ['is_valid' => false, 'reason' => 'MALFORMED_JSON', 'message' => 'Manifest is not valid JSON.'];
+        }
+
+        // Must be in COMMITTED state
+        if (($data['state'] ?? '') !== 'COMMITTED') {
+            return [
+                'is_valid' => false,
+                'reason'   => 'INCOMPLETE_OR_FAILED_STATE',
+                'message'  => "Manifest state is '{$data['state']}', not COMMITTED.",
+            ];
+        }
+
+        $schoolId = $data['school_id'] ?? null;
+        $pkgId    = $data['package_id'] ?? null;
+        $subId    = $data['created_subscription_id'] ?? null;
+
+        $school = School::find($schoolId);
+        if (! $school) {
+            return ['is_valid' => false, 'reason' => 'SCHOOL_NOT_FOUND', 'message' => "School ID {$schoolId} does not exist."];
+        }
+
+        $package = Package::find($pkgId);
+        if (! $package) {
+            return ['is_valid' => false, 'reason' => 'PACKAGE_NOT_FOUND', 'message' => "Package ID {$pkgId} does not exist."];
+        }
+
+        $subscription = SchoolSubscription::find($subId);
+        if (! $subscription) {
+            return ['is_valid' => false, 'reason' => 'SUBSCRIPTION_NOT_FOUND', 'message' => "Subscription ID {$subId} does not exist in DB."];
+        }
+
+        if ($subscription->school_id !== (int) $schoolId) {
+            return ['is_valid' => false, 'reason' => 'SCHOOL_MISMATCH', 'message' => "Subscription belongs to school {$subscription->school_id}, expected {$schoolId}."];
+        }
+
+        if ($subscription->package_id !== (int) $pkgId) {
+            return ['is_valid' => false, 'reason' => 'PACKAGE_MISMATCH', 'message' => "Subscription references package {$subscription->package_id}, expected {$pkgId}."];
+        }
+
+        if ($subscription->start_date?->toDateString() !== $data['start_date'] || $subscription->end_date?->toDateString() !== $data['end_date']) {
+            return ['is_valid' => false, 'reason' => 'DATE_MISMATCH', 'message' => 'Subscription dates do not match journal manifest dates.'];
+        }
+
+        return [
+            'is_valid'     => true,
+            'school'       => $school,
+            'package'      => $package,
+            'subscription' => $subscription,
+            'message'      => 'Manifest is valid and consistent with database state.',
+        ];
+    }
+
+    /**
+     * Write or update an audit journal file in private storage.
+     */
+    protected function writeJournal(array $data, ?string $existingPath = null): string
     {
         $journalDir = storage_path('app/private/entitlement_manifests');
         if (! File::isDirectory($journalDir)) {
             File::makeDirectory($journalDir, 0755, true);
         }
 
-        $filename = "legacy_provisioning_" . Carbon::now()->format('Ymd_His') . "_" . substr($data['execution_id'], 0, 8) . ".json";
-        $filepath = $journalDir . DIRECTORY_SEPARATOR . $filename;
+        $filepath = $existingPath ?? ($journalDir . DIRECTORY_SEPARATOR . "legacy_provisioning_" . Carbon::now()->format('Ymd_His') . "_" . substr($data['execution_id'], 0, 8) . ".json");
 
         File::put($filepath, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+
+        return $filepath;
     }
 }

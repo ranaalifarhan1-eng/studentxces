@@ -242,14 +242,30 @@ class LegacyEntitlementProvisioner
                     'notes'          => 'Provisioned by legacy entitlement tooling.',
                 ]);
             });
+        } catch (\Throwable $dbException) {
+            // DB Transaction Failed / Rolled Back: Update manifest state to FAILED_ROLLED_BACK
+            $journalData['state']         = 'FAILED_ROLLED_BACK';
+            $journalData['action_result'] = 'FAILED';
+            $journalData['failed_at']     = Carbon::now()->toIso8601String();
+            $journalData['error_message'] = $dbException->getMessage();
 
-            // Phase 3: Finalize Manifest to COMMITTED state on successful DB commit
-            $journalData['state']                        = 'COMMITTED';
-            $journalData['committed_at']                 = Carbon::now()->toIso8601String();
-            $journalData['created_subscription_id']      = $subscription->id;
-            $journalData['resulting_subscription_state'] = 'ALLOWED';
-            $journalData['action_result']                = 'PROVISIONED';
+            try {
+                $this->writeJournal($journalData, $journalPath);
+            } catch (\Throwable) {
+                // Secondary file write error suppressed to ensure original DB exception propagates
+            }
 
+            throw $dbException;
+        }
+
+        // Phase 3: Finalize Manifest to COMMITTED state on confirmed DB commit
+        $journalData['state']                        = 'COMMITTED';
+        $journalData['committed_at']                 = Carbon::now()->toIso8601String();
+        $journalData['created_subscription_id']      = $subscription->id;
+        $journalData['resulting_subscription_state'] = 'ALLOWED';
+        $journalData['action_result']                = 'PROVISIONED';
+
+        try {
             $this->writeJournal($journalData, $journalPath);
 
             return [
@@ -265,17 +281,147 @@ class LegacyEntitlementProvisioner
                 'journal_id'      => $executionId,
                 'message'         => "Successfully provisioned Legacy All Access subscription (#{$subscription->id}).",
             ];
-        } catch (\Throwable $e) {
-            // DB Transaction Failed / Rolled Back: Update manifest state to FAILED_ROLLED_BACK
-            $journalData['state']         = 'FAILED_ROLLED_BACK';
-            $journalData['action_result'] = 'FAILED';
-            $journalData['failed_at']     = Carbon::now()->toIso8601String();
-            $journalData['error_message'] = $e->getMessage();
-
-            $this->writeJournal($journalData, $journalPath);
-
-            throw $e;
+        } catch (\Throwable $journalEx) {
+            // DB committed successfully, but final journal write failed!
+            // Never report as rolled back; report DB_COMMITTED_JOURNAL_INCOMPLETE
+            return [
+                'status'          => 'DB_COMMITTED_JOURNAL_INCOMPLETE',
+                'school_id'       => $schoolId,
+                'school_name'     => $school->name,
+                'package_id'      => $package->id,
+                'package_name'    => $package->name,
+                'subscription_id' => $subscription->id,
+                'start_date'      => $startDate->toDateString(),
+                'end_date'        => $endDate->toDateString(),
+                'modules_count'   => $package->modules->count(),
+                'journal_id'      => $executionId,
+                'journal_error'   => $journalEx->getMessage(),
+                'message'         => "Subscription #{$subscription->id} was successfully committed to database, but final journal update failed ({$journalEx->getMessage()}). Manifest requires reconciliation.",
+            ];
         }
+    }
+
+    /**
+     * Reconcile a single manifest against database state.
+     */
+    public function reconcileManifest(string|array $manifest): array
+    {
+        $filePath = is_string($manifest) ? $manifest : null;
+        $data     = is_string($manifest) ? json_decode(File::get($manifest), true) : $manifest;
+
+        if (! is_array($data)) {
+            return ['status' => 'MALFORMED_JSON', 'message' => 'Manifest is not valid JSON.'];
+        }
+
+        $state = $data['state'] ?? '';
+
+        if ($state === 'COMMITTED') {
+            return [
+                'status'          => 'ALREADY_COMMITTED',
+                'school_id'       => $data['school_id'] ?? null,
+                'subscription_id' => $data['created_subscription_id'] ?? null,
+                'message'         => 'Manifest is already COMMITTED.',
+            ];
+        }
+
+        if ($state === 'FAILED_ROLLED_BACK') {
+            return [
+                'status'    => 'FAILED_ROLLED_BACK',
+                'school_id' => $data['school_id'] ?? null,
+                'message'   => 'Manifest recorded a failed rolled-back attempt. Safe to retry fresh provisioning.',
+            ];
+        }
+
+        // Reconcile PENDING state
+        $schoolId  = $data['school_id'] ?? null;
+        $pkgId     = $data['package_id'] ?? null;
+        $startDate = $data['start_date'] ?? null;
+        $endDate   = $data['end_date'] ?? null;
+
+        if (! $schoolId || ! $pkgId || ! $startDate || ! $endDate) {
+            return ['status' => 'INCOMPLETE_MANIFEST_METADATA', 'message' => 'Manifest missing required immutable parameters.'];
+        }
+
+        // Query database for matching subscription
+        $matchingSubs = SchoolSubscription::where('school_id', $schoolId)
+            ->where('package_id', $pkgId)
+            ->whereDate('start_date', $startDate)
+            ->whereDate('end_date', $endDate)
+            ->get();
+
+        if ($matchingSubs->count() === 1) {
+            $sub = $matchingSubs->first();
+
+            // Promote manifest to COMMITTED
+            $data['state']                        = 'COMMITTED';
+            $data['created_subscription_id']      = $sub->id;
+            $data['resulting_subscription_state'] = 'ALLOWED';
+            $data['action_result']                = 'PROVISIONED';
+            $data['committed_at']                 = $data['committed_at'] ?? Carbon::now()->toIso8601String();
+            $data['reconciled_at']                = Carbon::now()->toIso8601String();
+
+            if ($filePath) {
+                File::put($filePath, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
+            }
+
+            return [
+                'status'          => 'RECONCILED_COMMITTED',
+                'school_id'       => $schoolId,
+                'subscription_id' => $sub->id,
+                'package_id'      => $pkgId,
+                'manifest_path'   => $filePath,
+                'message'         => "Successfully reconciled PENDING manifest to COMMITTED for existing DB subscription #{$sub->id}.",
+            ];
+        }
+
+        if ($matchingSubs->isEmpty()) {
+            return [
+                'status'    => 'NO_DB_RECORD_RETRYABLE',
+                'school_id' => $schoolId,
+                'message'   => 'No matching database subscription found. Previous attempt did not commit; safe to re-run.',
+            ];
+        }
+
+        return [
+            'status'    => 'AMBIGUOUS_MATCHING_SUBSCRIPTIONS',
+            'school_id' => $schoolId,
+            'count'     => $matchingSubs->count(),
+            'message'   => "Found {$matchingSubs->count()} conflicting matching subscriptions in database. Automatic reconciliation refused.",
+        ];
+    }
+
+    /**
+     * Scans and reconciles all manifests in private storage.
+     */
+    public function reconcileAllManifests(?int $targetSchoolId = null): array
+    {
+        $journalDir = storage_path('app/private/entitlement_manifests');
+        if (! File::isDirectory($journalDir)) {
+            return [];
+        }
+
+        $files = File::files($journalDir);
+        $results = [];
+
+        foreach ($files as $file) {
+            $filePath = $file->getRealPath();
+            $content  = json_decode(File::get($filePath), true);
+
+            if (! is_array($content)) {
+                continue;
+            }
+
+            if ($targetSchoolId !== null && (int) ($content['school_id'] ?? 0) !== $targetSchoolId) {
+                continue;
+            }
+
+            $results[] = [
+                'file'   => $file->getFilename(),
+                'result' => $this->reconcileManifest($filePath),
+            ];
+        }
+
+        return $results;
     }
 
     /**
@@ -341,7 +487,7 @@ class LegacyEntitlementProvisioner
     /**
      * Write or update an audit journal file in private storage.
      */
-    protected function writeJournal(array $data, ?string $existingPath = null): string
+    public function writeJournal(array $data, ?string $existingPath = null): string
     {
         $journalDir = storage_path('app/private/entitlement_manifests');
         if (! File::isDirectory($journalDir)) {

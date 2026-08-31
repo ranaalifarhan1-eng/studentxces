@@ -11,6 +11,7 @@ class ProvisionLegacyEntitlements extends Command
     protected $signature = 'entitlement:provision-legacy
                             {--school= : Target school ID}
                             {--all-existing : Target all existing active schools}
+                            {--reconcile : Reconcile pending/incomplete journal manifests against database state}
                             {--execute : Required positive confirmation flag to perform real database mutations}
                             {--dry-run : Explicitly simulate execution with zero database writes}
                             {--start-date= : Subscription start date (YYYY-MM-DD)}
@@ -23,12 +24,40 @@ class ProvisionLegacyEntitlements extends Command
     {
         $schoolId    = $this->option('school');
         $allExisting = $this->option('all-existing');
+        $reconcile   = (bool) $this->option('reconcile');
         $execute     = (bool) $this->option('execute');
         $dryRunOpt   = (bool) $this->option('dry-run');
 
+        // Handle Reconcile Mode
+        if ($reconcile) {
+            $this->info('=== RECONCILING PENDING PROVISIONING MANIFESTS ===');
+            $reconciled = $provisioner->reconcileAllManifests($schoolId ? (int) $schoolId : null);
+
+            if (empty($reconciled)) {
+                $this->info('No pending manifests found to reconcile.');
+                return self::SUCCESS;
+            }
+
+            $rows = [];
+            foreach ($reconciled as $item) {
+                $res = $item['result'];
+                $rows[] = [
+                    'File'    => $item['file'],
+                    'School'  => $res['school_id'] ?? 'N/A',
+                    'Sub ID'  => $res['subscription_id'] ?? 'N/A',
+                    'Status'  => $res['status'],
+                    'Message' => $res['message'],
+                ];
+            }
+
+            $this->table(['File', 'School', 'Sub ID', 'Status', 'Message'], $rows);
+            $this->info('Reconciliation completed.');
+            return self::SUCCESS;
+        }
+
         // Target validation
         if (! $schoolId && ! $allExisting) {
-            $this->error('No target specified. Use --school=<id> or --all-existing.');
+            $this->error('No target specified. Use --school=<id>, --all-existing, or --reconcile.');
             $this->line('Safety Gate: Default invocation without explicit target performs zero actions.');
             return self::FAILURE;
         }

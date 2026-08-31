@@ -10,7 +10,6 @@ use App\Services\LegacyEntitlementProvisioner;
 use App\Services\SchoolEntitlementResolver;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\File;
 use Tests\TestCase;
 
@@ -128,9 +127,6 @@ class LegacyEntitlementProvisioningTest extends TestCase
     public function test_db_failure_during_provisioning_marks_manifest_as_failed_rolled_back(): void
     {
         $school = $this->createSchool('School DB Failure');
-
-        // Create a mock/subclass or temporary hook to simulate DB exception during SchoolSubscription::create
-        // We can simulate this by putting an invalid foreign key or simulating an exception in a listener
         $journalDir = storage_path('app/private/entitlement_manifests');
 
         SchoolSubscription::saving(function () {
@@ -161,6 +157,200 @@ class LegacyEntitlementProvisioningTest extends TestCase
         $validation = $this->provisioner->validateJournalManifest($journalFiles[0]->getRealPath());
         $this->assertFalse($validation['is_valid']);
         $this->assertEquals('INCOMPLETE_OR_FAILED_STATE', $validation['reason']);
+    }
+
+    public function test_post_commit_journal_failure_reports_db_committed_journal_incomplete(): void
+    {
+        $school = $this->createSchool('School Post Commit Failure');
+
+        // Subclass provisioner to simulate filesystem write failure ONLY during Phase 3 (COMMITTED write)
+        $customProvisioner = new class(app(SchoolEntitlementResolver::class)) extends LegacyEntitlementProvisioner {
+            public int $writeCallCount = 0;
+            public function writeJournal(array $data, ?string $existingPath = null): string
+            {
+                $this->writeCallCount++;
+                if ($this->writeCallCount === 2) {
+                    // Phase 3 COMMITTED update throws
+                    throw new \RuntimeException("Simulated disk write failure on COMMITTED finalization.");
+                }
+                return parent::writeJournal($data, $existingPath);
+            }
+        };
+
+        $result = $customProvisioner->provisionSchool($school);
+
+        $this->assertEquals('DB_COMMITTED_JOURNAL_INCOMPLETE', $result['status']);
+        $this->assertNotNull($result['subscription_id']);
+        $this->assertStringContainsString('successfully committed to database', $result['message']);
+
+        // Assert subscription is intact in DB
+        $sub = SchoolSubscription::find($result['subscription_id']);
+        $this->assertNotNull($sub);
+        $this->assertEquals($school->id, $sub->school_id);
+
+        // Assert manifest on disk remained PENDING
+        $journalDir = storage_path('app/private/entitlement_manifests');
+        $journalFiles = File::files($journalDir);
+        $this->assertCount(1, $journalFiles);
+
+        $manifest = json_decode(File::get($journalFiles[0]->getRealPath()), true);
+        $this->assertEquals('PENDING', $manifest['state']);
+    }
+
+    public function test_reconcile_manifest_promotes_pending_manifest_with_committed_db_record(): void
+    {
+        $school = $this->createSchool('School Reconcile Success');
+        $package = $this->provisioner->getOrCreateLegacyPackage();
+
+        $sub = SchoolSubscription::create([
+            'school_id'   => $school->id,
+            'package_id'  => $package->id,
+            'start_date'  => Carbon::today()->toDateString(),
+            'end_date'    => Carbon::today()->addYear()->toDateString(),
+            'status'      => 'active',
+            'amount_paid' => 0,
+        ]);
+
+        $journalDir = storage_path('app/private/entitlement_manifests');
+        $filePath = $journalDir . '/test_pending_manifest.json';
+
+        $pendingData = [
+            'execution_id'            => 'reconcile-test-uuid',
+            'state'                   => 'PENDING',
+            'created_at'              => Carbon::now()->toIso8601String(),
+            'school_id'               => $school->id,
+            'package_id'              => $package->id,
+            'start_date'              => Carbon::today()->toDateString(),
+            'end_date'                => Carbon::today()->addYear()->toDateString(),
+            'created_subscription_id' => null,
+        ];
+        File::put($filePath, json_encode($pendingData));
+
+        // Reconcile
+        $recResult = $this->provisioner->reconcileManifest($filePath);
+
+        $this->assertEquals('RECONCILED_COMMITTED', $recResult['status']);
+        $this->assertEquals($sub->id, $recResult['subscription_id']);
+
+        // Check updated file on disk
+        $updated = json_decode(File::get($filePath), true);
+        $this->assertEquals('COMMITTED', $updated['state']);
+        $this->assertEquals($sub->id, $updated['created_subscription_id']);
+        $this->assertNotNull($updated['reconciled_at']);
+
+        // Assert 0 duplicate subscriptions created
+        $this->assertEquals(1, SchoolSubscription::where('school_id', $school->id)->count());
+    }
+
+    public function test_reconcile_manifest_with_no_db_record_returns_retryable(): void
+    {
+        $school = $this->createSchool('School No DB Match');
+        $package = $this->provisioner->getOrCreateLegacyPackage();
+
+        $journalDir = storage_path('app/private/entitlement_manifests');
+        $filePath = $journalDir . '/test_pending_no_db.json';
+
+        $pendingData = [
+            'execution_id'            => 'reconcile-no-db-uuid',
+            'state'                   => 'PENDING',
+            'created_at'              => Carbon::now()->toIso8601String(),
+            'school_id'               => $school->id,
+            'package_id'              => $package->id,
+            'start_date'              => Carbon::today()->toDateString(),
+            'end_date'                => Carbon::today()->addYear()->toDateString(),
+            'created_subscription_id' => null,
+        ];
+        File::put($filePath, json_encode($pendingData));
+
+        $recResult = $this->provisioner->reconcileManifest($filePath);
+
+        $this->assertEquals('NO_DB_RECORD_RETRYABLE', $recResult['status']);
+    }
+
+    public function test_reconcile_manifest_with_ambiguous_db_records_refuses_reconciliation(): void
+    {
+        $school = $this->createSchool('School Ambiguous DB Match');
+        $package = $this->provisioner->getOrCreateLegacyPackage();
+
+        // Create 2 identical subscriptions
+        SchoolSubscription::create(['school_id' => $school->id, 'package_id' => $package->id, 'start_date' => Carbon::today()->toDateString(), 'end_date' => Carbon::today()->addYear()->toDateString(), 'status' => 'active', 'amount_paid' => 0]);
+        SchoolSubscription::create(['school_id' => $school->id, 'package_id' => $package->id, 'start_date' => Carbon::today()->toDateString(), 'end_date' => Carbon::today()->addYear()->toDateString(), 'status' => 'active', 'amount_paid' => 0]);
+
+        $journalDir = storage_path('app/private/entitlement_manifests');
+        $filePath = $journalDir . '/test_pending_ambiguous.json';
+
+        $pendingData = [
+            'execution_id'            => 'reconcile-ambiguous-uuid',
+            'state'                   => 'PENDING',
+            'created_at'              => Carbon::now()->toIso8601String(),
+            'school_id'               => $school->id,
+            'package_id'              => $package->id,
+            'start_date'              => Carbon::today()->toDateString(),
+            'end_date'                => Carbon::today()->addYear()->toDateString(),
+            'created_subscription_id' => null,
+        ];
+        File::put($filePath, json_encode($pendingData));
+
+        $recResult = $this->provisioner->reconcileManifest($filePath);
+
+        $this->assertEquals('AMBIGUOUS_MATCHING_SUBSCRIPTIONS', $recResult['status']);
+    }
+
+    public function test_repeated_reconciliation_is_idempotent(): void
+    {
+        $school = $this->createSchool('School Idempotent Reconcile');
+        $package = $this->provisioner->getOrCreateLegacyPackage();
+
+        $sub = SchoolSubscription::create(['school_id' => $school->id, 'package_id' => $package->id, 'start_date' => Carbon::today()->toDateString(), 'end_date' => Carbon::today()->addYear()->toDateString(), 'status' => 'active', 'amount_paid' => 0]);
+
+        $journalDir = storage_path('app/private/entitlement_manifests');
+        $filePath = $journalDir . '/test_idempotent.json';
+
+        $pendingData = [
+            'execution_id'            => 'reconcile-idem-uuid',
+            'state'                   => 'PENDING',
+            'created_at'              => Carbon::now()->toIso8601String(),
+            'school_id'               => $school->id,
+            'package_id'              => $package->id,
+            'start_date'              => Carbon::today()->toDateString(),
+            'end_date'                => Carbon::today()->addYear()->toDateString(),
+            'created_subscription_id' => null,
+        ];
+        File::put($filePath, json_encode($pendingData));
+
+        $firstRec = $this->provisioner->reconcileManifest($filePath);
+        $this->assertEquals('RECONCILED_COMMITTED', $firstRec['status']);
+
+        $secondRec = $this->provisioner->reconcileManifest($filePath);
+        $this->assertEquals('ALREADY_COMMITTED', $secondRec['status']);
+    }
+
+    public function test_artisan_command_with_reconcile_flag_runs_reconciliation(): void
+    {
+        $school = $this->createSchool('School CLI Reconcile');
+        $package = $this->provisioner->getOrCreateLegacyPackage();
+
+        $sub = SchoolSubscription::create(['school_id' => $school->id, 'package_id' => $package->id, 'start_date' => Carbon::today()->toDateString(), 'end_date' => Carbon::today()->addYear()->toDateString(), 'status' => 'active', 'amount_paid' => 0]);
+
+        $journalDir = storage_path('app/private/entitlement_manifests');
+        $filePath = $journalDir . '/cli_pending.json';
+
+        $pendingData = [
+            'execution_id'            => 'cli-reconcile-uuid',
+            'state'                   => 'PENDING',
+            'created_at'              => Carbon::now()->toIso8601String(),
+            'school_id'               => $school->id,
+            'package_id'              => $package->id,
+            'start_date'              => Carbon::today()->toDateString(),
+            'end_date'                => Carbon::today()->addYear()->toDateString(),
+            'created_subscription_id' => null,
+        ];
+        File::put($filePath, json_encode($pendingData));
+
+        $this->artisan('entitlement:provision-legacy --reconcile')
+            ->expectsOutputToContain('=== RECONCILING PENDING PROVISIONING MANIFESTS ===')
+            ->expectsOutputToContain('RECONCILED_COMMITTED')
+            ->assertExitCode(0);
     }
 
     public function test_validate_journal_manifest_rejects_tampered_or_stale_data(): void
@@ -194,7 +384,7 @@ class LegacyEntitlementProvisioningTest extends TestCase
 
     public function test_repeated_provisioning_is_strictly_idempotent(): void
     {
-        $school = $this->createSchool('School Idempotent');
+        $school = $this->createSchool('School Idempotent Direct');
 
         // First run
         $res1 = $this->provisioner->provisionSchool($school);
@@ -339,7 +529,7 @@ class LegacyEntitlementProvisioningTest extends TestCase
     public function test_artisan_command_without_options_fails_safe_with_zero_actions(): void
     {
         $this->artisan('entitlement:provision-legacy')
-            ->expectsOutput('No target specified. Use --school=<id> or --all-existing.')
+            ->expectsOutput('No target specified. Use --school=<id>, --all-existing, or --reconcile.')
             ->assertExitCode(1);
     }
 

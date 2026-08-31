@@ -7,7 +7,9 @@ use App\Models\PackageModule;
 use App\Models\School;
 use App\Models\SchoolSubscription;
 use Carbon\Carbon;
-use Illuminate\Support\Collection;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\File;
+use Illuminate\Support\Str;
 
 class LegacyEntitlementProvisioner
 {
@@ -20,7 +22,7 @@ class LegacyEntitlementProvisioner
 
     /**
      * Get or create the canonical internal Legacy All Access package with all 14 modules.
-     * Idempotent: ensures all 14 modules are attached without duplicates.
+     * Inactive by default (is_active = false) so it never appears in standard commercial plan dropdowns.
      */
     public function getOrCreateLegacyPackage(array $attributes = []): Package
     {
@@ -36,10 +38,10 @@ class LegacyEntitlementProvisioner
                 'description'   => $attributes['description'] ?? 'Internal legacy entitlement tier with all canonical modules.',
                 'price_monthly' => $attributes['price_monthly'] ?? 0.00,
                 'price_yearly'  => $attributes['price_yearly'] ?? 0.00,
-                'max_students'  => $attributes['max_students'] ?? 0, // 0 = unlimited/legacy
-                'max_staff'     => $attributes['max_staff'] ?? 0,
+                'max_students'  => $attributes['max_students'] ?? 0, // 0 = unlimited by schema definition
+                'max_staff'     => $attributes['max_staff'] ?? 0,    // 0 = unlimited by schema definition
                 'storage_gb'    => $attributes['storage_gb'] ?? 100,
-                'is_active'     => $attributes['is_active'] ?? true,
+                'is_active'     => $attributes['is_active'] ?? false, // Inactive by default to isolate from public dropdowns
             ]);
         } elseif ($package->trashed()) {
             $package->restore();
@@ -67,16 +69,54 @@ class LegacyEntitlementProvisioner
     }
 
     /**
+     * Validates date parameters strictly.
+     * Throws \InvalidArgumentException if dates or duration are invalid.
+     */
+    public function validateDates(array $options): array
+    {
+        $startDateStr = $options['start_date'] ?? null;
+        $endDateStr   = $options['end_date'] ?? null;
+        $durationDays = isset($options['duration_days']) ? (int) $options['duration_days'] : 365;
+
+        if ($durationDays <= 0) {
+            throw new \InvalidArgumentException("Duration days must be a positive integer greater than zero.");
+        }
+
+        if ($startDateStr) {
+            if (! preg_match('/^\d{4}-\d{2}-\d{2}$/', $startDateStr) || ! Carbon::hasFormat($startDateStr, 'Y-m-d')) {
+                throw new \InvalidArgumentException("Invalid start-date format '{$startDateStr}'. Expected YYYY-MM-DD.");
+            }
+            $startDate = Carbon::createFromFormat('Y-m-d', $startDateStr)->startOfDay();
+        } else {
+            $startDate = Carbon::today();
+        }
+
+        if ($endDateStr) {
+            if (! preg_match('/^\d{4}-\d{2}-\d{2}$/', $endDateStr) || ! Carbon::hasFormat($endDateStr, 'Y-m-d')) {
+                throw new \InvalidArgumentException("Invalid end-date format '{$endDateStr}'. Expected YYYY-MM-DD.");
+            }
+            $endDate = Carbon::createFromFormat('Y-m-d', $endDateStr)->startOfDay();
+
+            if ($endDate->lessThanOrEqualTo($startDate)) {
+                throw new \InvalidArgumentException("End date '{$endDateStr}' must be strictly greater than start date '{$startDate->toDateString()}'.");
+            }
+        } else {
+            $endDate = (clone $startDate)->addDays($durationDays);
+        }
+
+        return [$startDate, $endDate];
+    }
+
+    /**
      * Provision a legacy subscription for a specific school.
      */
     public function provisionSchool(School $school, array $options = []): array
     {
-        $dryRun       = $options['dry_run'] ?? false;
-        $durationDays = $options['duration_days'] ?? 365;
-        $startDate    = isset($options['start_date']) ? Carbon::parse($options['start_date']) : Carbon::today();
-        $endDate      = isset($options['end_date']) ? Carbon::parse($options['end_date']) : (clone $startDate)->addDays($durationDays);
-        $status       = $options['status'] ?? 'active';
-        $amountPaid   = $options['amount_paid'] ?? 0.00;
+        $dryRun     = $options['dry_run'] ?? false;
+        $status     = $options['status'] ?? 'active';
+        $amountPaid = $options['amount_paid'] ?? 0.00;
+
+        [$startDate, $endDate] = $this->validateDates($options);
 
         $schoolId = $school->id;
 
@@ -162,34 +202,71 @@ class LegacyEntitlementProvisioner
             ];
         }
 
-        // Execute Provisioning
-        $package = $this->getOrCreateLegacyPackage();
+        // Execute Provisioning atomically inside a DB transaction
+        return DB::transaction(function () use ($school, $schoolId, $startDate, $endDate, $status, $amountPaid) {
+            $package = $this->getOrCreateLegacyPackage();
 
-        $subscription = SchoolSubscription::create([
-            'school_id'      => $schoolId,
-            'package_id'     => $package->id,
-            'coupon_id'      => null,
-            'start_date'     => $startDate->toDateString(),
-            'end_date'       => $endDate->toDateString(),
-            'status'         => $status,
-            'is_trial'       => $status === 'trial',
-            'trial_ends_at'  => $status === 'trial' ? $endDate->toDateString() : null,
-            'amount_paid'    => $amountPaid,
-            'payment_method' => 'internal_legacy',
-            'notes'          => 'Provisioned by legacy entitlement tooling.',
-        ]);
+            $subscription = SchoolSubscription::create([
+                'school_id'      => $schoolId,
+                'package_id'     => $package->id,
+                'coupon_id'      => null,
+                'start_date'     => $startDate->toDateString(),
+                'end_date'       => $endDate->toDateString(),
+                'status'         => $status,
+                'is_trial'       => $status === 'trial',
+                'trial_ends_at'  => $status === 'trial' ? $endDate->toDateString() : null,
+                'amount_paid'    => $amountPaid,
+                'payment_method' => 'internal_legacy',
+                'notes'          => 'Provisioned by legacy entitlement tooling.',
+            ]);
 
-        return [
-            'status'          => 'PROVISIONED',
-            'school_id'       => $schoolId,
-            'school_name'     => $school->name,
-            'package_id'      => $package->id,
-            'package_name'    => $package->name,
-            'subscription_id' => $subscription->id,
-            'start_date'      => $startDate->toDateString(),
-            'end_date'        => $endDate->toDateString(),
-            'modules_count'   => $package->modules->count(),
-            'message'         => "Successfully provisioned Legacy All Access subscription (#{$subscription->id}).",
-        ];
+            // Write provisioning journal record
+            $journalData = [
+                'execution_id'                => (string) Str::uuid(),
+                'timestamp'                   => Carbon::now()->toIso8601String(),
+                'school_id'                   => $schoolId,
+                'school_name'                 => $school->name,
+                'package_id'                  => $package->id,
+                'package_name'                => $package->name,
+                'created_subscription_id'     => $subscription->id,
+                'previous_subscription_state' => 'NO_ACTIVE_SUBSCRIPTION',
+                'resulting_subscription_state'=> 'ALLOWED',
+                'start_date'                  => $startDate->toDateString(),
+                'end_date'                    => $endDate->toDateString(),
+                'action_result'               => 'PROVISIONED',
+            ];
+
+            $this->writeJournal($journalData);
+
+            return [
+                'status'          => 'PROVISIONED',
+                'school_id'       => $schoolId,
+                'school_name'     => $school->name,
+                'package_id'      => $package->id,
+                'package_name'    => $package->name,
+                'subscription_id' => $subscription->id,
+                'start_date'      => $startDate->toDateString(),
+                'end_date'        => $endDate->toDateString(),
+                'modules_count'   => $package->modules->count(),
+                'journal_id'      => $journalData['execution_id'],
+                'message'         => "Successfully provisioned Legacy All Access subscription (#{$subscription->id}).",
+            ];
+        });
+    }
+
+    /**
+     * Write an audit journal file to private storage.
+     */
+    protected function writeJournal(array $data): void
+    {
+        $journalDir = storage_path('app/private/entitlement_manifests');
+        if (! File::isDirectory($journalDir)) {
+            File::makeDirectory($journalDir, 0755, true);
+        }
+
+        $filename = "legacy_provisioning_" . Carbon::now()->format('Ymd_His') . "_" . substr($data['execution_id'], 0, 8) . ".json";
+        $filepath = $journalDir . DIRECTORY_SEPARATOR . $filename;
+
+        File::put($filepath, json_encode($data, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES));
     }
 }

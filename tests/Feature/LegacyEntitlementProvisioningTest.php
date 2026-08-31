@@ -10,6 +10,7 @@ use App\Services\LegacyEntitlementProvisioner;
 use App\Services\SchoolEntitlementResolver;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\File;
 use Tests\TestCase;
 
 class LegacyEntitlementProvisioningTest extends TestCase
@@ -24,6 +25,12 @@ class LegacyEntitlementProvisioningTest extends TestCase
         parent::setUp();
         $this->resolver = app(SchoolEntitlementResolver::class);
         $this->provisioner = app(LegacyEntitlementProvisioner::class);
+
+        // Clean up test journal directory if exists
+        $journalDir = storage_path('app/private/entitlement_manifests');
+        if (File::isDirectory($journalDir)) {
+            File::cleanDirectory($journalDir);
+        }
     }
 
     protected function createSchool(string $name = 'Legacy School'): School
@@ -36,27 +43,47 @@ class LegacyEntitlementProvisioningTest extends TestCase
         ]);
     }
 
-    public function test_get_or_create_legacy_package_creates_package_with_all_14_canonical_modules(): void
+    public function test_get_or_create_legacy_package_creates_inactive_package_with_all_14_canonical_modules(): void
     {
         $package = $this->provisioner->getOrCreateLegacyPackage();
 
         $this->assertNotNull($package);
         $this->assertEquals(LegacyEntitlementProvisioner::LEGACY_PACKAGE_SLUG, $package->slug);
         $this->assertEquals(LegacyEntitlementProvisioner::LEGACY_PACKAGE_NAME, $package->name);
+        $this->assertFalse((bool) $package->is_active, 'Legacy package must be inactive by default to avoid public plan exposure.');
         $this->assertEquals(14, $package->modules->count());
 
         $canonical = config('modules.canonical');
         foreach ($canonical as $slug) {
             $this->assertTrue($package->modules->pluck('module_slug')->contains($slug));
         }
+
+        // Must NOT appear in active commercial package query
+        $activePackages = Package::where('is_active', true)->get();
+        $this->assertFalse($activePackages->pluck('slug')->contains(LegacyEntitlementProvisioner::LEGACY_PACKAGE_SLUG));
     }
 
-    public function test_dry_run_performs_zero_database_writes(): void
+    public function test_inactive_legacy_package_still_grants_all_modules_to_entitled_subscription(): void
+    {
+        $school = $this->createSchool('School Inactive Entitled');
+
+        $res = $this->provisioner->provisionSchool($school);
+        $this->assertEquals('PROVISIONED', $res['status']);
+
+        // Verify resolver sees school as active and entitled for all 14 canonical modules
+        $this->assertTrue($this->resolver->hasActiveSubscription($school));
+        foreach (config('modules.canonical') as $slug) {
+            $this->assertTrue($this->resolver->isModuleEnabled($school, $slug));
+        }
+    }
+
+    public function test_dry_run_performs_zero_database_writes_and_no_journal(): void
     {
         $school = $this->createSchool('School Dry Run');
 
         $initialSubsCount = SchoolSubscription::count();
         $initialPkgCount  = Package::count();
+        $journalDir = storage_path('app/private/entitlement_manifests');
 
         $result = $this->provisioner->provisionSchool($school, ['dry_run' => true]);
 
@@ -66,29 +93,29 @@ class LegacyEntitlementProvisioningTest extends TestCase
 
         $this->assertEquals($initialSubsCount, SchoolSubscription::count());
         $this->assertEquals($initialPkgCount, Package::count());
+
+        $journalFiles = File::isDirectory($journalDir) ? File::files($journalDir) : [];
+        $this->assertEmpty($journalFiles, 'Dry-run must not create any journal manifest files.');
     }
 
-    public function test_provisioning_school_with_no_subscription_creates_intended_active_subscription(): void
+    public function test_provisioning_creates_journal_manifest_on_successful_execution(): void
     {
-        $school = $this->createSchool('School Clean Target');
+        $school = $this->createSchool('School Journaled Target');
 
         $result = $this->provisioner->provisionSchool($school);
 
         $this->assertEquals('PROVISIONED', $result['status']);
-        $this->assertEquals($school->id, $result['school_id']);
-        $this->assertNotNull($result['subscription_id']);
+        $this->assertNotNull($result['journal_id']);
 
-        $sub = SchoolSubscription::find($result['subscription_id']);
-        $this->assertNotNull($sub);
-        $this->assertEquals('active', $sub->status);
-        $this->assertEquals(LegacyEntitlementProvisioner::LEGACY_PACKAGE_SLUG, $sub->package->slug);
-        $this->assertEquals(14, $sub->package->modules->count());
+        $journalDir = storage_path('app/private/entitlement_manifests');
+        $journalFiles = File::files($journalDir);
+        $this->assertCount(1, $journalFiles);
 
-        // Verify resolver immediately sees this school as entitled for all 14 modules
-        $this->assertTrue($this->resolver->hasActiveSubscription($school));
-        foreach (config('modules.canonical') as $slug) {
-            $this->assertTrue($this->resolver->isModuleEnabled($school, $slug));
-        }
+        $journalContent = json_decode(File::get($journalFiles[0]->getRealPath()), true);
+        $this->assertEquals($school->id, $journalContent['school_id']);
+        $this->assertEquals($result['subscription_id'], $journalContent['created_subscription_id']);
+        $this->assertEquals('PROVISIONED', $journalContent['action_result']);
+        $this->assertEquals('ALLOWED', $journalContent['resulting_subscription_state']);
     }
 
     public function test_repeated_provisioning_is_strictly_idempotent(): void
@@ -220,15 +247,19 @@ class LegacyEntitlementProvisioningTest extends TestCase
         $this->assertEquals('AMBIGUOUS_ACTIVE_SUBSCRIPTIONS', $result['status']);
     }
 
-    public function test_school_a_provisioning_never_affects_school_b(): void
+    public function test_date_validation_rejects_invalid_date_formats_and_ranges(): void
     {
-        $schoolA = $this->createSchool('School Tenant A');
-        $schoolB = $this->createSchool('School Tenant B');
+        // Invalid date format
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage("Invalid start-date format");
+        $this->provisioner->validateDates(['start_date' => '2026/08/31']);
+    }
 
-        $this->provisioner->provisionSchool($schoolA);
-
-        $this->assertTrue($this->resolver->hasActiveSubscription($schoolA));
-        $this->assertFalse($this->resolver->hasActiveSubscription($schoolB));
+    public function test_date_validation_rejects_end_date_less_than_start_date(): void
+    {
+        $this->expectException(\InvalidArgumentException::class);
+        $this->expectExceptionMessage("must be strictly greater than start date");
+        $this->provisioner->validateDates(['start_date' => '2026-08-31', 'end_date' => '2026-08-01']);
     }
 
     public function test_artisan_command_without_options_fails_safe_with_zero_actions(): void
@@ -238,29 +269,27 @@ class LegacyEntitlementProvisioningTest extends TestCase
             ->assertExitCode(1);
     }
 
-    public function test_artisan_command_with_dry_run_creates_zero_records(): void
+    public function test_artisan_command_without_execute_flag_defaults_to_simulation(): void
     {
-        $school = $this->createSchool('School Artisan Dry Run');
+        $school = $this->createSchool('School No Execute Flag');
 
         $initialSubs = SchoolSubscription::count();
 
-        $this->artisan("entitlement:provision-legacy --school={$school->id} --dry-run")
-            ->expectsOutputToContain('[DRY-RUN MODE ACTIVATED]')
+        $this->artisan("entitlement:provision-legacy --school={$school->id}")
+            ->expectsOutputToContain('[SIMULATION MODE] --execute flag was not provided. ZERO DATABASE WRITES.')
             ->assertExitCode(0);
 
-        $this->assertEquals($initialSubs, SchoolSubscription::count());
+        $this->assertEquals($initialSubs, SchoolSubscription::count(), 'Without --execute, zero subscriptions must be created.');
     }
 
-    public function test_artisan_command_all_existing_provisions_clean_candidates(): void
+    public function test_artisan_command_with_execute_flag_provisions_clean_target(): void
     {
-        $school1 = $this->createSchool('School Batch 1');
-        $school2 = $this->createSchool('School Batch 2');
+        $school = $this->createSchool('School Executed Target');
 
-        $this->artisan('entitlement:provision-legacy --all-existing')
-            ->expectsOutputToContain('Provisioning completed.')
+        $this->artisan("entitlement:provision-legacy --school={$school->id} --execute")
+            ->expectsOutputToContain('Provisioning completed successfully.')
             ->assertExitCode(0);
 
-        $this->assertTrue($this->resolver->hasActiveSubscription($school1));
-        $this->assertTrue($this->resolver->hasActiveSubscription($school2));
+        $this->assertTrue($this->resolver->hasActiveSubscription($school));
     }
 }

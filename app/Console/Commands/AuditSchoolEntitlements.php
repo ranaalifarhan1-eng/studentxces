@@ -11,13 +11,20 @@ class AuditSchoolEntitlements extends Command
 {
     protected $signature = 'entitlement:audit
                             {--school= : Specific school ID to audit}
-                            {--all : Audit all schools (default)}';
+                            {--all : Audit all schools}';
 
     protected $description = 'Read-only diagnostic audit of tenant school subscriptions, module entitlements, and would-be ENFORCE outcomes.';
 
     public function handle(SchoolEntitlementResolver $resolver): int
     {
         $schoolId = $this->option('school');
+        $all      = $this->option('all');
+
+        if (! $schoolId && ! $all) {
+            $this->error('No target specified. Use --school=<id> to audit a single school or --all to audit all schools.');
+            $this->line('Safety Gate: Default invocation without explicit target performs zero actions.');
+            return self::FAILURE;
+        }
 
         $schools = collect();
 

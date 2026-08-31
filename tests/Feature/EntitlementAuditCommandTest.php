@@ -35,7 +35,16 @@ class EntitlementAuditCommandTest extends TestCase
         ]);
     }
 
-    public function test_audit_command_performs_zero_writes(): void
+    public function test_audit_command_without_target_fails_safe(): void
+    {
+        $exitCode = Artisan::call('entitlement:audit');
+        $output   = Artisan::output();
+
+        $this->assertEquals(1, $exitCode);
+        $this->assertStringContainsString('No target specified. Use --school=<id> to audit a single school or --all to audit all schools.', $output);
+    }
+
+    public function test_audit_command_all_performs_zero_writes(): void
     {
         $school1 = $this->createSchool('Audit Target 1');
         $school2 = $this->createSchool('Audit Target 2');
@@ -44,7 +53,7 @@ class EntitlementAuditCommandTest extends TestCase
         $initialPkgs = Package::count();
         $initialMods = SchoolModule::count();
 
-        $exitCode = Artisan::call('entitlement:audit');
+        $exitCode = Artisan::call('entitlement:audit', ['--all' => true]);
         $output   = Artisan::output();
 
         $this->assertEquals(0, $exitCode);

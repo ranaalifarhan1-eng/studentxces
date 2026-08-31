@@ -7,6 +7,7 @@ use App\Models\Book;
 use App\Models\BookIssue;
 use App\Models\Staff;
 use App\Models\Student;
+use App\Rules\SchoolExists;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
@@ -154,17 +155,19 @@ class LibraryController extends Controller
 
     public function issueBook(Request $request)
     {
+        $sid = $this->getSchoolId();
+
+        $memberTable = $request->member_type === 'staff' ? 'staff' : 'students';
+
         $data = $request->validate([
-            'book_id'      => 'required|exists:books,id',
+            'book_id'      => ['required', SchoolExists::make('books', 'id', $sid)],
             'member_type'  => 'required|in:student,staff',
-            'member_id'    => 'required|integer',
+            'member_id'    => ['required', 'integer', SchoolExists::make($memberTable, 'id', $sid)],
             'issued_date'  => 'required|date',
             'due_date'     => 'required|date|after:issued_date',
             'fine_per_day' => 'nullable|numeric|min:0',
             'note'         => 'nullable|string|max:500',
         ]);
-
-        $sid  = $this->getSchoolId();
         $book = Book::findOrFail($data['book_id']);
 
         if ($book->available_copies < 1) {

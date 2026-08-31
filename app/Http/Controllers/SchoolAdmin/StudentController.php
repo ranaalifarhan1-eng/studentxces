@@ -8,6 +8,7 @@ use App\Models\SchoolClass;
 use App\Models\Section;
 use App\Models\Student;
 use App\Models\StudentDocument;
+use App\Rules\SchoolExists;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -70,6 +71,8 @@ class StudentController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
             // Personal
             'first_name'      => 'required|string|max:100',
@@ -88,8 +91,8 @@ class StudentController extends Controller
             'previous_school' => 'nullable|string|max:200',
             'roll_no'         => 'nullable|string|max:50',
             // Class
-            'class_id'        => 'required|exists:classes,id',
-            'section_id'      => 'nullable|exists:sections,id',
+            'class_id'        => ['required', SchoolExists::make('classes', 'id', $sid)],
+            'section_id'      => ['nullable', SchoolExists::make('sections', 'id', $sid)],
             // Guardian
             'guardian.name'       => 'required|string|max:150',
             'guardian.relation'   => 'required|string|max:50',
@@ -99,15 +102,18 @@ class StudentController extends Controller
             'guardian.address'    => 'nullable|string|max:500',
         ]);
 
-        DB::transaction(function () use ($data, $request) {
+        DB::transaction(function () use ($data, $request, $sid) {
             $guardian = Guardian::create(array_merge(
                 $data['guardian'],
-                ['school_id' => $this->getSchoolId()],
+                ['school_id' => $sid],
             ));
 
             Student::create(array_merge(
                 collect($data)->except('guardian')->toArray(),
-                ['guardian_id' => $guardian->id],
+                [
+                    'school_id'   => $sid,
+                    'guardian_id' => $guardian->id,
+                ],
             ));
         });
 
@@ -136,6 +142,8 @@ class StudentController extends Controller
 
     public function update(Request $request, Student $student): RedirectResponse
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
             'first_name'      => 'required|string|max:100',
             'last_name'       => 'nullable|string|max:100',
@@ -152,8 +160,8 @@ class StudentController extends Controller
             'admission_date'  => 'nullable|date',
             'previous_school' => 'nullable|string|max:200',
             'roll_no'         => 'nullable|string|max:50',
-            'class_id'        => 'required|exists:classes,id',
-            'section_id'      => 'nullable|exists:sections,id',
+            'class_id'        => ['required', SchoolExists::make('classes', 'id', $sid)],
+            'section_id'      => ['nullable', SchoolExists::make('sections', 'id', $sid)],
             'guardian.name'       => 'required|string|max:150',
             'guardian.relation'   => 'required|string|max:50',
             'guardian.phone'      => 'nullable|string|max:20',

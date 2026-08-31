@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Student;
 use App\Models\TransportRoute;
 use App\Models\Vehicle;
+use App\Rules\SchoolExists;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -100,9 +101,11 @@ class TransportController extends Controller
 
     public function storeRoute(Request $request)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
             'name'        => 'required|string|max:150',
-            'vehicle_id'  => 'nullable|exists:vehicles,id',
+            'vehicle_id'  => ['nullable', SchoolExists::make('vehicles', 'id', $sid)],
             'start_point' => 'nullable|string|max:200',
             'end_point'   => 'nullable|string|max:200',
             'monthly_fee' => 'nullable|numeric|min:0',
@@ -111,16 +114,18 @@ class TransportController extends Controller
             'stops.*.pickup_time'  => 'nullable|string|max:10',
         ]);
 
-        TransportRoute::create(array_merge($data, ['school_id' => $this->getSchoolId()]));
+        TransportRoute::create(array_merge($data, ['school_id' => $sid]));
 
         return back()->with('success', 'Route created.');
     }
 
     public function updateRoute(Request $request, TransportRoute $route)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
             'name'        => 'required|string|max:150',
-            'vehicle_id'  => 'nullable|exists:vehicles,id',
+            'vehicle_id'  => ['nullable', SchoolExists::make('vehicles', 'id', $sid)],
             'start_point' => 'nullable|string|max:200',
             'end_point'   => 'nullable|string|max:200',
             'monthly_fee' => 'nullable|numeric|min:0',
@@ -172,8 +177,10 @@ class TransportController extends Controller
 
     public function assignStudent(Request $request, TransportRoute $route)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'student_id' => 'required|exists:students,id',
+            'student_id' => ['required', SchoolExists::make('students', 'id', $sid)],
             'stop'       => 'nullable|string|max:200',
             'fee_linked' => 'boolean',
         ]);
@@ -190,6 +197,10 @@ class TransportController extends Controller
 
     public function removeStudent(TransportRoute $route, Student $student)
     {
+        if (! auth()->user()->hasRole('super-admin') && $student->school_id !== $this->getSchoolId()) {
+            abort(403, 'Unauthorized action.');
+        }
+
         $route->students()->detach($student->id);
         return back()->with('success', 'Student removed from route.');
     }

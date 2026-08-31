@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\FeeCategory;
 use App\Models\FeeStructure;
 use App\Models\SchoolClass;
+use App\Rules\SchoolExists;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -35,9 +36,11 @@ class FeeStructureController extends Controller
 
     public function store(Request $request)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'class_id'        => 'required|exists:classes,id',
-            'fee_category_id' => 'required|exists:fee_categories,id',
+            'class_id'        => ['required', SchoolExists::make('classes', 'id', $sid)],
+            'fee_category_id' => ['required', SchoolExists::make('fee_categories', 'id', $sid)],
             'academic_year'   => 'required|string|max:20',
             'amount'          => 'required|numeric|min:0',
             'due_date'        => 'nullable|date',
@@ -47,7 +50,7 @@ class FeeStructureController extends Controller
         ]);
 
         FeeStructure::create(array_merge($data, [
-            'school_id' => $this->getSchoolId(),
+            'school_id' => $sid,
             'is_active' => $data['is_active'] ?? true,
         ]));
 
@@ -56,9 +59,11 @@ class FeeStructureController extends Controller
 
     public function update(Request $request, FeeStructure $feeStructure)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'class_id'        => 'required|exists:classes,id',
-            'fee_category_id' => 'required|exists:fee_categories,id',
+            'class_id'        => ['required', SchoolExists::make('classes', 'id', $sid)],
+            'fee_category_id' => ['required', SchoolExists::make('fee_categories', 'id', $sid)],
             'academic_year'   => 'required|string|max:20',
             'amount'          => 'required|numeric|min:0',
             'due_date'        => 'nullable|date',

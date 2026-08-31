@@ -7,6 +7,7 @@ use App\Models\Department;
 use App\Models\Designation;
 use App\Models\Staff;
 use App\Models\StaffDocument;
+use App\Rules\SchoolExists;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -69,6 +70,8 @@ class StaffController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
             'first_name'     => 'required|string|max:100',
             'last_name'      => 'nullable|string|max:100',
@@ -80,8 +83,8 @@ class StaffController extends Controller
             'phone'          => 'nullable|string|max:20',
             'email'          => 'nullable|email|max:150',
             'address'        => 'nullable|string|max:500',
-            'department_id'  => 'nullable|exists:departments,id',
-            'designation_id' => 'nullable|exists:designations,id',
+            'department_id'  => ['nullable', SchoolExists::make('departments', 'id', $sid)],
+            'designation_id' => ['nullable', SchoolExists::make('designations', 'id', $sid)],
             'joining_date'   => 'nullable|date',
             'salary_type'    => 'required|in:fixed,hourly',
             'salary'         => 'nullable|numeric|min:0',
@@ -114,6 +117,8 @@ class StaffController extends Controller
 
     public function update(Request $request, Staff $staff): RedirectResponse
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
             'first_name'     => 'required|string|max:100',
             'last_name'      => 'nullable|string|max:100',
@@ -125,8 +130,8 @@ class StaffController extends Controller
             'phone'          => 'nullable|string|max:20',
             'email'          => 'nullable|email|max:150',
             'address'        => 'nullable|string|max:500',
-            'department_id'  => 'nullable|exists:departments,id',
-            'designation_id' => 'nullable|exists:designations,id',
+            'department_id'  => ['nullable', SchoolExists::make('departments', 'id', $sid)],
+            'designation_id' => ['nullable', SchoolExists::make('designations', 'id', $sid)],
             'joining_date'   => 'nullable|date',
             'salary_type'    => 'required|in:fixed,hourly',
             'salary'         => 'nullable|numeric|min:0',
@@ -169,6 +174,10 @@ class StaffController extends Controller
 
     public function deleteDocument(StaffDocument $document): RedirectResponse
     {
+        if (! auth()->user()->hasRole('super-admin') && $document->school_id !== $this->getSchoolId()) {
+            abort(403, 'Unauthorized action.');
+        }
+
         Storage::disk('private')->delete($document->file_path);
         $document->delete();
 

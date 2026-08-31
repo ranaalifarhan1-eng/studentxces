@@ -15,6 +15,7 @@ use App\Models\Section;
 use App\Models\Staff;
 use App\Models\Student;
 use App\Models\Subject;
+use App\Rules\SchoolExists;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
@@ -90,7 +91,13 @@ class ReportController extends Controller
         ])->get()->sum('pending_count');
 
         $recentActivity = Activity::with('causer')
-            ->where('properties->school_id', $sid)
+            ->where(function ($q) use ($sid) {
+                $q->where('properties->school_id', $sid)
+                  ->orWhereHasMorph('causer', [\App\Models\User::class], fn ($uq) => $uq->where('school_id', $sid))
+                  ->orWhere(function ($subj) use ($sid) {
+                      $subj->where('subject_type', School::class)->where('subject_id', $sid);
+                  });
+            })
             ->latest()
             ->take(10)
             ->get();
@@ -312,16 +319,17 @@ class ReportController extends Controller
 
     public function runCustomReport(Request $request)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'entity'     => 'required|in:students,attendance,marks,fees,staff',
-            'filters'    => 'nullable|array',
-            'filters.class_id'  => 'nullable|exists:classes,id',
+            'entity'            => 'required|in:students,attendance,marks,fees,staff',
+            'filters'           => 'nullable|array',
+            'filters.class_id'  => ['nullable', SchoolExists::make('classes', 'id', $sid)],
             'filters.from_date' => 'nullable|date',
             'filters.to_date'   => 'nullable|date',
             'filters.status'    => 'nullable|string',
         ]);
 
-        $sid    = $this->getSchoolId();
         $entity = $data['entity'];
         $f      = $data['filters'] ?? [];
 
@@ -367,7 +375,19 @@ class ReportController extends Controller
 
     public function auditLog(Request $request)
     {
-        $logs = Activity::with('causer:id,name')
+        $sid          = $this->getSchoolId();
+        $isSuperAdmin = auth()->user()?->hasRole('super-admin');
+
+        $logs = Activity::with('causer:id,name,school_id')
+            ->when(! $isSuperAdmin, function ($q) use ($sid) {
+                $q->where(function ($sub) use ($sid) {
+                    $sub->where('properties->school_id', $sid)
+                        ->orWhereHasMorph('causer', [\App\Models\User::class], fn ($uq) => $uq->where('school_id', $sid))
+                        ->orWhere(function ($subj) use ($sid) {
+                            $subj->where('subject_type', School::class)->where('subject_id', $sid);
+                        });
+                });
+            })
             ->when($request->causer_id, fn ($q) => $q->where('causer_id', $request->causer_id))
             ->when($request->subject_type, fn ($q) => $q->where('subject_type', 'like', '%' . $request->subject_type . '%'))
             ->when($request->from_date, fn ($q) => $q->whereDate('created_at', '>=', $request->from_date))
@@ -376,7 +396,7 @@ class ReportController extends Controller
             ->paginate(50)
             ->withQueryString();
 
-        $users = \App\Models\User::where('school_id', $this->getSchoolId())
+        $users = \App\Models\User::when(! $isSuperAdmin, fn ($q) => $q->where('school_id', $sid))
             ->orderBy('name')
             ->get(['id', 'name']);
 

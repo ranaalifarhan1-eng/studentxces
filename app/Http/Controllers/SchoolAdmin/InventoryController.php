@@ -8,6 +8,7 @@ use App\Models\InventoryItem;
 use App\Models\InventoryIssue;
 use App\Models\InventoryPurchase;
 use App\Models\Staff;
+use App\Rules\SchoolExists;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
@@ -89,23 +90,27 @@ class InventoryController extends Controller
 
     public function storeItem(Request $request)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'category_id'   => 'required|exists:inventory_categories,id',
+            'category_id'   => ['required', SchoolExists::make('inventory_categories', 'id', $sid)],
             'name'          => 'required|string|max:200',
             'unit'          => 'required|string|max:30',
             'minimum_stock' => 'required|numeric|min:0',
             'description'   => 'nullable|string',
         ]);
 
-        InventoryItem::create(array_merge($data, ['school_id' => $this->getSchoolId()]));
+        InventoryItem::create(array_merge($data, ['school_id' => $sid]));
 
         return back()->with('success', 'Item added.');
     }
 
     public function updateItem(Request $request, InventoryItem $inventoryItem)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'category_id'   => 'required|exists:inventory_categories,id',
+            'category_id'   => ['required', SchoolExists::make('inventory_categories', 'id', $sid)],
             'name'          => 'required|string|max:200',
             'unit'          => 'required|string|max:30',
             'minimum_stock' => 'required|numeric|min:0',
@@ -146,8 +151,10 @@ class InventoryController extends Controller
 
     public function storePurchase(Request $request)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'item_id'       => 'required|exists:inventory_items,id',
+            'item_id'       => ['required', SchoolExists::make('inventory_items', 'id', $sid)],
             'vendor'        => 'nullable|string|max:200',
             'purchase_date' => 'required|date',
             'quantity'      => 'required|numeric|min:0.01',
@@ -157,7 +164,7 @@ class InventoryController extends Controller
         ]);
 
         $data['total_price'] = round((float)$data['quantity'] * (float)$data['unit_price'], 2);
-        $data['school_id']   = $this->getSchoolId();
+        $data['school_id']   = $sid;
 
         DB::transaction(function () use ($data) {
             InventoryPurchase::create($data);
@@ -193,10 +200,13 @@ class InventoryController extends Controller
 
     public function storeIssue(Request $request)
     {
+        $sid = $this->getSchoolId();
+        $targetTable = $request->issued_to_type === 'department' ? 'departments' : 'staff';
+
         $data = $request->validate([
-            'item_id'        => 'required|exists:inventory_items,id',
+            'item_id'        => ['required', SchoolExists::make('inventory_items', 'id', $sid)],
             'issued_to_type' => 'required|in:staff,department',
-            'issued_to_id'   => 'required|integer',
+            'issued_to_id'   => ['required', 'integer', SchoolExists::make($targetTable, 'id', $sid)],
             'issued_to_name' => 'required|string|max:200',
             'quantity'       => 'required|numeric|min:0.01',
             'issue_date'     => 'required|date',
@@ -210,7 +220,7 @@ class InventoryController extends Controller
             return back()->withErrors(['quantity' => 'Insufficient stock. Available: ' . $item->current_stock . ' ' . $item->unit]);
         }
 
-        $data['school_id'] = $this->getSchoolId();
+        $data['school_id'] = $sid;
         $data['status']    = 'issued';
 
         DB::transaction(function () use ($data, $item) {

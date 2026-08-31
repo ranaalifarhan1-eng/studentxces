@@ -8,6 +8,7 @@ use App\Models\Department;
 use App\Models\Payroll;
 use App\Models\SalaryStructure;
 use App\Models\Staff;
+use App\Rules\SchoolExists;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
@@ -96,13 +97,13 @@ class PayrollController extends Controller
 
     public function generate(Request $request)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
             'month_year'    => 'required|string|regex:/^\d{4}-\d{2}$/',
-            'department_id' => 'nullable|exists:departments,id',
+            'department_id' => ['nullable', SchoolExists::make('departments', 'id', $sid)],
             'working_days'  => 'required|integer|min:1|max:31',
         ]);
-
-        $sid = $this->getSchoolId();
         $monthYear = $data['month_year'];
 
         $staff = Staff::with('salaryStructure')

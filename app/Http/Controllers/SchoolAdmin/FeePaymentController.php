@@ -8,6 +8,7 @@ use App\Models\FeePayment;
 use App\Models\FeeStructure;
 use App\Models\SchoolClass;
 use App\Models\Student;
+use App\Rules\SchoolExists;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
@@ -65,9 +66,11 @@ class FeePaymentController extends Controller
 
     public function store(Request $request)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'student_id'       => 'required|exists:students,id',
-            'fee_structure_id' => 'required|exists:fee_structures,id',
+            'student_id'       => ['required', SchoolExists::make('students', 'id', $sid)],
+            'fee_structure_id' => ['required', SchoolExists::make('fee_structures', 'id', $sid)],
             'amount_due'       => 'required|numeric|min:0',
             'amount_paid'      => 'required|numeric|min:0',
             'discount'         => 'nullable|numeric|min:0',
@@ -77,8 +80,6 @@ class FeePaymentController extends Controller
             'method'           => 'required|in:cash,card,online,bkash,nagad,rocket',
             'note'             => 'nullable|string|max:500',
         ]);
-
-        $sid = $this->getSchoolId();
 
         $amountDue    = (float) $data['amount_due'];
         $amountPaid   = (float) $data['amount_paid'];

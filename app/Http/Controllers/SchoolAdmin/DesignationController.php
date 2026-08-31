@@ -5,6 +5,7 @@ namespace App\Http\Controllers\SchoolAdmin;
 use App\Http\Controllers\Controller;
 use App\Models\Department;
 use App\Models\Designation;
+use App\Rules\SchoolExists;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -27,8 +28,10 @@ class DesignationController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'department_id' => 'nullable|exists:departments,id',
+            'department_id' => ['nullable', SchoolExists::make('departments', 'id', $sid)],
             'name'          => 'required|string|max:100',
             'description'   => 'nullable|string|max:500',
         ]);
@@ -40,8 +43,10 @@ class DesignationController extends Controller
 
     public function update(Request $request, Designation $designation): RedirectResponse
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'department_id' => 'nullable|exists:departments,id',
+            'department_id' => ['nullable', SchoolExists::make('departments', 'id', $sid)],
             'name'          => 'required|string|max:100',
             'description'   => 'nullable|string|max:500',
         ]);

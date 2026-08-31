@@ -5,6 +5,7 @@ namespace App\Http\Controllers\SchoolAdmin;
 use App\Http\Controllers\Controller;
 use App\Models\SchoolClass;
 use App\Models\Section;
+use App\Rules\SchoolExists;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -26,8 +27,10 @@ class SectionController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'class_id' => 'required|exists:classes,id',
+            'class_id' => ['required', SchoolExists::make('classes', 'id', $sid)],
             'name'     => 'required|string|max:100',
             'capacity' => 'nullable|integer|min:0',
         ]);
@@ -39,8 +42,10 @@ class SectionController extends Controller
 
     public function update(Request $request, Section $section): RedirectResponse
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'class_id' => 'required|exists:classes,id',
+            'class_id' => ['required', SchoolExists::make('classes', 'id', $sid)],
             'name'     => 'required|string|max:100',
             'capacity' => 'nullable|integer|min:0',
         ]);

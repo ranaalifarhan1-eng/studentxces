@@ -13,6 +13,7 @@ use App\Models\SchoolNotification;
 use App\Models\Staff;
 use App\Models\Student;
 use App\Models\User;
+use App\Rules\SchoolExists;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -41,17 +42,19 @@ class CommunicationController extends Controller
 
     public function storeAnnouncement(Request $request)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
             'title'       => 'required|string|max:255',
             'body'        => 'required|string',
             'audience'    => 'required|in:all,class,role',
-            'class_id'    => 'nullable|exists:classes,id',
+            'class_id'    => ['nullable', SchoolExists::make('classes', 'id', $sid)],
             'target_role' => 'nullable|string|max:50',
             'is_pinned'   => 'boolean',
             'published_at'=> 'nullable|date',
         ]);
 
-        $data['school_id']  = $this->getSchoolId();
+        $data['school_id']  = $sid;
         $data['author_id']  = auth()->id();
         $data['published_at'] = $data['published_at'] ?? now();
 
@@ -61,11 +64,13 @@ class CommunicationController extends Controller
 
     public function updateAnnouncement(Request $request, Announcement $announcement)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
             'title'       => 'required|string|max:255',
             'body'        => 'required|string',
             'audience'    => 'required|in:all,class,role',
-            'class_id'    => 'nullable|exists:classes,id',
+            'class_id'    => ['nullable', SchoolExists::make('classes', 'id', $sid)],
             'target_role' => 'nullable|string|max:50',
             'is_pinned'   => 'boolean',
             'published_at'=> 'nullable|date',
@@ -116,14 +121,16 @@ class CommunicationController extends Controller
 
     public function sendMessage(Request $request)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'recipient_id' => 'required|exists:users,id',
+            'recipient_id' => ['required', SchoolExists::make('users', 'id', $sid)],
             'subject'      => 'nullable|string|max:255',
             'body'         => 'required|string|max:5000',
         ]);
 
         Message::create([
-            'school_id'    => $this->getSchoolId(),
+            'school_id'    => $sid,
             'sender_id'    => auth()->id(),
             'recipient_id' => $data['recipient_id'],
             'subject'      => $data['subject'] ?? null,
@@ -154,10 +161,12 @@ class CommunicationController extends Controller
 
     public function sendBlast(Request $request)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
             'channel'    => 'required|in:sms,email',
             'audience'   => 'required|in:all_parents,all_students,all_staff,class',
-            'class_id'   => 'nullable|exists:classes,id',
+            'class_id'   => ['nullable', SchoolExists::make('classes', 'id', $sid)],
             'subject'    => 'required_if:channel,email|nullable|string|max:255',
             'message'    => 'required|string|max:1600',
         ]);

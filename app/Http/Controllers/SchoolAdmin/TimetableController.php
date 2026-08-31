@@ -8,6 +8,7 @@ use App\Models\Section;
 use App\Models\Staff;
 use App\Models\Subject;
 use App\Models\Timetable;
+use App\Rules\SchoolExists;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -64,11 +65,13 @@ class TimetableController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'class_id'   => 'required|exists:classes,id',
-            'section_id' => 'nullable|exists:sections,id',
-            'subject_id' => 'required|exists:subjects,id',
-            'teacher_id' => 'nullable|exists:staff,id',
+            'class_id'   => ['required', SchoolExists::make('classes', 'id', $sid)],
+            'section_id' => ['nullable', SchoolExists::make('sections', 'id', $sid)],
+            'subject_id' => ['required', SchoolExists::make('subjects', 'id', $sid)],
+            'teacher_id' => ['nullable', SchoolExists::make('staff', 'id', $sid)],
             'day_of_week'=> 'required|in:monday,tuesday,wednesday,thursday,friday,saturday,sunday',
             'start_time' => 'required|date_format:H:i',
             'end_time'   => 'required|date_format:H:i|after:start_time',

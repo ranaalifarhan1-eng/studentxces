@@ -5,6 +5,7 @@ namespace App\Http\Controllers\SchoolAdmin;
 use App\Http\Controllers\Controller;
 use App\Models\SchoolClass;
 use App\Models\Subject;
+use App\Rules\SchoolExists;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -28,8 +29,10 @@ class SubjectController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'class_id'   => 'required|exists:classes,id',
+            'class_id'   => ['required', SchoolExists::make('classes', 'id', $sid)],
             'name'       => 'required|string|max:150',
             'code'       => 'nullable|string|max:20',
             'type'       => 'required|in:theory,practical',
@@ -44,8 +47,10 @@ class SubjectController extends Controller
 
     public function update(Request $request, Subject $subject): RedirectResponse
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'class_id'   => 'required|exists:classes,id',
+            'class_id'   => ['required', SchoolExists::make('classes', 'id', $sid)],
             'name'       => 'required|string|max:150',
             'code'       => 'nullable|string|max:20',
             'type'       => 'required|in:theory,practical',

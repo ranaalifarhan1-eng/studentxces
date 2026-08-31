@@ -8,6 +8,7 @@ use App\Models\HostelAllocation;
 use App\Models\HostelRoom;
 use App\Models\Staff;
 use App\Models\Student;
+use App\Rules\SchoolExists;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
@@ -42,25 +43,29 @@ class HostelController extends Controller
 
     public function store(Request $request)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
             'name'       => 'required|string|max:150',
             'type'       => 'required|in:boys,girls,mixed',
-            'warden_id'  => 'nullable|exists:staff,id',
+            'warden_id'  => ['nullable', SchoolExists::make('staff', 'id', $sid)],
             'address'    => 'nullable|string',
             'status'     => 'required|in:active,inactive',
         ]);
 
-        Hostel::create(array_merge($data, ['school_id' => $this->getSchoolId()]));
+        Hostel::create(array_merge($data, ['school_id' => $sid]));
 
         return back()->with('success', 'Hostel created.');
     }
 
     public function update(Request $request, Hostel $hostel)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
             'name'       => 'required|string|max:150',
             'type'       => 'required|in:boys,girls,mixed',
-            'warden_id'  => 'nullable|exists:staff,id',
+            'warden_id'  => ['nullable', SchoolExists::make('staff', 'id', $sid)],
             'address'    => 'nullable|string',
             'status'     => 'required|in:active,inactive',
         ]);
@@ -178,10 +183,12 @@ class HostelController extends Controller
 
     public function storeAllocation(Request $request)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'hostel_id'    => 'required|exists:hostels,id',
-            'room_id'      => 'required|exists:hostel_rooms,id',
-            'student_id'   => 'required|exists:students,id',
+            'hostel_id'    => ['required', SchoolExists::make('hostels', 'id', $sid)],
+            'room_id'      => ['required', SchoolExists::make('hostel_rooms', 'id', $sid)],
+            'student_id'   => ['required', SchoolExists::make('students', 'id', $sid)],
             'bed_no'       => 'nullable|string|max:20',
             'joining_date' => 'required|date',
             'fee_linked'   => 'boolean',
@@ -201,7 +208,7 @@ class HostelController extends Controller
             return back()->withErrors(['student_id' => 'Student is already allocated to a hostel room.']);
         }
 
-        $data['school_id'] = $this->getSchoolId();
+        $data['school_id'] = $sid;
         $data['status']    = 'active';
 
         DB::transaction(function () use ($data, $room) {

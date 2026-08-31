@@ -8,6 +8,7 @@ use App\Models\SchoolClass;
 use App\Models\Section;
 use App\Models\Staff;
 use App\Models\Student;
+use App\Rules\SchoolExists;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
@@ -64,16 +65,16 @@ class AttendanceController extends Controller
      */
     public function store(Request $request): RedirectResponse
     {
+        $schoolId = $this->getSchoolId();
+
         $data = $request->validate([
-            'date'              => 'required|date',
-            'class_id'          => 'required|exists:classes,id',
-            'records'           => 'required|array|min:1',
-            'records.*.student_id' => 'required|exists:students,id',
+            'date'                 => 'required|date',
+            'class_id'             => ['required', SchoolExists::make('classes', 'id', $schoolId)],
+            'records'              => 'required|array|min:1',
+            'records.*.student_id' => ['required', SchoolExists::make('students', 'id', $schoolId)],
             'records.*.status'     => 'required|in:present,absent,late,half_day',
             'records.*.remarks'    => 'nullable|string|max:200',
         ]);
-
-        $schoolId = $this->getSchoolId();
 
         DB::transaction(function () use ($data, $schoolId) {
             foreach ($data['records'] as $record) {
@@ -160,15 +161,15 @@ class AttendanceController extends Controller
      */
     public function staffStore(Request $request): RedirectResponse
     {
+        $schoolId = $this->getSchoolId();
+
         $data = $request->validate([
             'date'                 => 'required|date',
             'records'              => 'required|array|min:1',
-            'records.*.staff_id'   => 'required|exists:staff,id',
+            'records.*.staff_id'   => ['required', SchoolExists::make('staff', 'id', $schoolId)],
             'records.*.status'     => 'required|in:present,absent,late,half_day',
             'records.*.remarks'    => 'nullable|string|max:200',
         ]);
-
-        $schoolId = $this->getSchoolId();
 
         DB::transaction(function () use ($data, $schoolId) {
             foreach ($data['records'] as $record) {

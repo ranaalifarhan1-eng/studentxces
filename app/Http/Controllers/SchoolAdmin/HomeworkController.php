@@ -11,6 +11,7 @@ use App\Models\SchoolClass;
 use App\Models\Staff;
 use App\Models\Subject;
 use App\Models\Syllabus;
+use App\Rules\SchoolExists;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -42,26 +43,30 @@ class HomeworkController extends Controller
 
     public function store(Request $request)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'class_id'    => 'required|exists:classes,id',
-            'subject_id'  => 'required|exists:subjects,id',
-            'teacher_id'  => 'nullable|exists:staff,id',
+            'class_id'    => ['required', SchoolExists::make('classes', 'id', $sid)],
+            'subject_id'  => ['required', SchoolExists::make('subjects', 'id', $sid)],
+            'teacher_id'  => ['nullable', SchoolExists::make('staff', 'id', $sid)],
             'title'       => 'required|string|max:255',
             'description' => 'nullable|string',
             'due_date'    => 'required|date',
         ]);
 
-        Homework::create(array_merge($data, ['school_id' => $this->getSchoolId()]));
+        Homework::create(array_merge($data, ['school_id' => $sid]));
 
         return back()->with('success', 'Homework assigned.');
     }
 
     public function update(Request $request, Homework $homework)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'class_id'    => 'required|exists:classes,id',
-            'subject_id'  => 'required|exists:subjects,id',
-            'teacher_id'  => 'nullable|exists:staff,id',
+            'class_id'    => ['required', SchoolExists::make('classes', 'id', $sid)],
+            'subject_id'  => ['required', SchoolExists::make('subjects', 'id', $sid)],
+            'teacher_id'  => ['nullable', SchoolExists::make('staff', 'id', $sid)],
             'title'       => 'required|string|max:255',
             'description' => 'nullable|string',
             'due_date'    => 'required|date',
@@ -131,10 +136,12 @@ class HomeworkController extends Controller
 
     public function storeLessonPlan(Request $request)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'class_id'         => 'required|exists:classes,id',
-            'subject_id'       => 'required|exists:subjects,id',
-            'teacher_id'       => 'nullable|exists:staff,id',
+            'class_id'         => ['required', SchoolExists::make('classes', 'id', $sid)],
+            'subject_id'       => ['required', SchoolExists::make('subjects', 'id', $sid)],
+            'teacher_id'       => ['nullable', SchoolExists::make('staff', 'id', $sid)],
             'title'            => 'required|string|max:255',
             'objectives'       => 'nullable|string',
             'content'          => 'nullable|string',
@@ -143,7 +150,7 @@ class HomeworkController extends Controller
             'week_start'       => 'required|date',
         ]);
 
-        LessonPlan::create(array_merge($data, ['school_id' => $this->getSchoolId()]));
+        LessonPlan::create(array_merge($data, ['school_id' => $sid]));
 
         return back()->with('success', 'Lesson plan created.');
     }
@@ -195,9 +202,11 @@ class HomeworkController extends Controller
 
     public function storeSyllabus(Request $request)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'class_id'      => 'required|exists:classes,id',
-            'subject_id'    => 'required|exists:subjects,id',
+            'class_id'      => ['required', SchoolExists::make('classes', 'id', $sid)],
+            'subject_id'    => ['required', SchoolExists::make('subjects', 'id', $sid)],
             'academic_year' => 'required|string|max:20',
             'title'         => 'required|string|max:255',
             'topics'        => 'nullable|array',
@@ -205,7 +214,7 @@ class HomeworkController extends Controller
             'topics.*.covered'=> 'boolean',
         ]);
 
-        $data['school_id'] = $this->getSchoolId();
+        $data['school_id'] = $sid;
 
         $syllabus = Syllabus::create($data);
         $syllabus->recalculateCompletion();
@@ -255,10 +264,12 @@ class HomeworkController extends Controller
 
     public function storeOnlineClass(Request $request)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'class_id'         => 'required|exists:classes,id',
-            'subject_id'       => 'required|exists:subjects,id',
-            'teacher_id'       => 'nullable|exists:staff,id',
+            'class_id'         => ['required', SchoolExists::make('classes', 'id', $sid)],
+            'subject_id'       => ['required', SchoolExists::make('subjects', 'id', $sid)],
+            'teacher_id'       => ['nullable', SchoolExists::make('staff', 'id', $sid)],
             'title'            => 'required|string|max:255',
             'platform'         => 'required|in:zoom,google_meet,jitsi,other',
             'meeting_url'      => 'required|url|max:500',

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\LeaveRequest;
 use App\Models\LeaveType;
 use App\Models\Staff;
+use App\Rules\SchoolExists;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
@@ -102,9 +103,11 @@ class LeaveController extends Controller
 
     public function store(Request $request)
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'staff_id'      => 'required|exists:staff,id',
-            'leave_type_id' => 'required|exists:leave_types,id',
+            'staff_id'      => ['required', SchoolExists::make('staff', 'id', $sid)],
+            'leave_type_id' => ['required', SchoolExists::make('leave_types', 'id', $sid)],
             'start_date'    => 'required|date',
             'end_date'      => 'required|date|after_or_equal:start_date',
             'reason'        => 'nullable|string|max:500',
@@ -115,7 +118,7 @@ class LeaveController extends Controller
         $days  = $start->diffInWeekdays($end) + 1;
 
         LeaveRequest::create(array_merge($data, [
-            'school_id' => $this->getSchoolId(),
+            'school_id' => $sid,
             'days'      => $days,
             'status'    => 'pending',
         ]));

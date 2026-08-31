@@ -91,7 +91,11 @@ class LoginController extends Controller
 
         activity()
             ->causedBy($user)
-            ->withProperties(['ip' => $request->ip(), 'user_agent' => $request->userAgent()])
+            ->withProperties([
+                'ip'         => $request->ip(),
+                'user_agent' => $request->userAgent(),
+                'school_id'  => $user->school_id,
+            ])
             ->log('User logged in');
 
         return redirect()->route('dashboard');

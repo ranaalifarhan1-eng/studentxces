@@ -10,6 +10,7 @@ use App\Models\SchoolClass;
 use App\Models\Section;
 use App\Models\Student;
 use App\Models\Subject;
+use App\Rules\SchoolExists;
 use App\Services\GradingService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
@@ -51,27 +52,31 @@ class ExamController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
             'name'        => 'required|string|max:150',
             'type'        => 'required|in:unit_test,mid_term,final,custom',
-            'class_id'    => 'required|exists:classes,id',
+            'class_id'    => ['required', SchoolExists::make('classes', 'id', $sid)],
             'start_date'  => 'nullable|date',
             'end_date'    => 'nullable|date|after_or_equal:start_date',
             'status'      => 'required|in:draft,published,completed',
             'description' => 'nullable|string|max:500',
         ]);
 
-        Exam::create(array_merge($data, ['school_id' => $this->getSchoolId()]));
+        Exam::create(array_merge($data, ['school_id' => $sid]));
 
         return back()->with('success', 'Exam created.');
     }
 
     public function update(Request $request, Exam $exam): RedirectResponse
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
             'name'        => 'required|string|max:150',
             'type'        => 'required|in:unit_test,mid_term,final,custom',
-            'class_id'    => 'required|exists:classes,id',
+            'class_id'    => ['required', SchoolExists::make('classes', 'id', $sid)],
             'start_date'  => 'nullable|date',
             'end_date'    => 'nullable|date|after_or_equal:start_date',
             'status'      => 'required|in:draft,published,completed',
@@ -126,11 +131,13 @@ class ExamController extends Controller
      */
     public function saveMarks(Request $request, Exam $exam): RedirectResponse
     {
+        $sid = $this->getSchoolId();
+
         $data = $request->validate([
-            'section_id'              => 'nullable|exists:sections,id',
+            'section_id'              => ['nullable', SchoolExists::make('sections', 'id', $sid)],
             'marks'                   => 'required|array',
-            'marks.*.student_id'      => 'required|exists:students,id',
-            'marks.*.subject_id'      => 'required|exists:subjects,id',
+            'marks.*.student_id'      => ['required', SchoolExists::make('students', 'id', $sid)],
+            'marks.*.subject_id'      => ['required', SchoolExists::make('subjects', 'id', $sid)],
             'marks.*.marks_obtained'  => 'nullable|numeric|min:0|max:100',
             'marks.*.is_absent'       => 'boolean',
             'marks.*.remarks'         => 'nullable|string|max:200',

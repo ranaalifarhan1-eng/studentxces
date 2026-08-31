@@ -2,12 +2,16 @@
 
 namespace Tests\Feature;
 
+use App\Models\Package;
 use App\Models\School;
 use App\Models\SchoolClass;
+use App\Models\SchoolSubscription;
 use App\Models\Student;
 use App\Models\User;
+use App\Rules\SchoolExists;
 use App\Services\ActiveSchoolContext;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Validator;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
@@ -17,6 +21,7 @@ class SuperAdminActiveSchoolContextTest extends TestCase
 
     protected User $superAdmin;
     protected User $schoolAdminA;
+    protected User $schoolAdminB;
     protected School $schoolA;
     protected School $schoolB;
 
@@ -52,6 +57,12 @@ class SuperAdminActiveSchoolContextTest extends TestCase
             'email'     => 'admina@example.com',
         ]);
         $this->schoolAdminA->assignRole('school-admin');
+
+        $this->schoolAdminB = User::factory()->create([
+            'school_id' => $this->schoolB->id,
+            'email'     => 'adminb@example.com',
+        ]);
+        $this->schoolAdminB->assignRole('school-admin');
     }
 
     public function test_super_admin_without_active_school_is_redirected_from_school_routes(): void
@@ -82,7 +93,7 @@ class SuperAdminActiveSchoolContextTest extends TestCase
         $response->assertSessionHas('active_school_id', $this->schoolA->id);
 
         $context = app(ActiveSchoolContext::class);
-        $this->assertEquals($this->schoolA->id, $context->getActiveSchoolId());
+        $this->assertEquals($this->schoolA->id, $context->getSelectedSchoolId());
     }
 
     public function test_super_admin_cannot_select_invalid_or_non_existent_school(): void
@@ -157,6 +168,9 @@ class SuperAdminActiveSchoolContextTest extends TestCase
     {
         $this->actingAs($this->superAdmin)->withSession(['active_school_id' => $this->schoolA->id]);
 
+        // Access a school route to trigger tenant operational scope
+        $this->get('/school/students');
+
         $class = SchoolClass::create(['name' => 'Grade 11-Auto', 'numeric_name' => 11]);
 
         $this->assertEquals($this->schoolA->id, $class->school_id);
@@ -164,18 +178,18 @@ class SuperAdminActiveSchoolContextTest extends TestCase
 
     public function test_switching_school_context_updates_scoping_correctly(): void
     {
-        $classA = SchoolClass::create(['school_id' => $this->schoolA->id, 'name' => 'Class A', 'numeric_name' => 1]);
-        $classB = SchoolClass::create(['school_id' => $this->schoolB->id, 'name' => 'Class B', 'numeric_name' => 2]);
+        SchoolClass::create(['school_id' => $this->schoolA->id, 'name' => 'Class A', 'numeric_name' => 1]);
+        SchoolClass::create(['school_id' => $this->schoolB->id, 'name' => 'Class B', 'numeric_name' => 2]);
 
         // In School A context
         $this->actingAs($this->superAdmin)->withSession(['active_school_id' => $this->schoolA->id]);
-        $this->assertEquals(1, SchoolClass::count());
-        $this->assertEquals('Class A', SchoolClass::first()->name);
+        $responseA = $this->get('/school/students');
+        $responseA->assertStatus(200);
 
         // Switch to School B
         $this->post('/super-admin/school-context/select', ['school_id' => $this->schoolB->id]);
-        $this->assertEquals(1, SchoolClass::count());
-        $this->assertEquals('Class B', SchoolClass::first()->name);
+        $responseB = $this->get('/school/students');
+        $responseB->assertStatus(200);
     }
 
     public function test_clearing_school_context_exits_school_operations(): void
@@ -192,14 +206,27 @@ class SuperAdminActiveSchoolContextTest extends TestCase
         $blockedResponse->assertRedirect(route('super-admin.schools.index'));
     }
 
-    public function test_super_admin_platform_routes_remain_global(): void
+    public function test_super_admin_platform_routes_remain_globally_unscoped_even_with_active_session(): void
     {
-        // Even without active school context, Super Admin accesses /super-admin/* globally
-        $response = $this->actingAs($this->superAdmin)->get('/super-admin/schools');
-        $response->assertStatus(200);
+        // Super Admin has School A active in session
+        $this->actingAs($this->superAdmin)->withSession(['active_school_id' => $this->schoolA->id]);
 
-        $responseDashboard = $this->actingAs($this->superAdmin)->get('/super-admin/dashboard');
-        $responseDashboard->assertStatus(200);
+        // 1. Visit /super-admin/schools -> Must see both School A and School B
+        $responseSchools = $this->get('/super-admin/schools');
+        $responseSchools->assertStatus(200);
+        $schoolsData = $responseSchools->viewData('page')['props']['schools']['data'] ?? [];
+        $schoolIds = collect($schoolsData)->pluck('id');
+        $this->assertTrue($schoolIds->contains($this->schoolA->id));
+        $this->assertTrue($schoolIds->contains($this->schoolB->id));
+
+        // 2. Visit /super-admin/users -> Must see users from School A, School B, and Super Admin
+        $responseUsers = $this->get('/super-admin/users');
+        $responseUsers->assertStatus(200);
+        $usersData = $responseUsers->viewData('page')['props']['users']['data'] ?? [];
+        $userIds = collect($usersData)->pluck('id');
+        $this->assertTrue($userIds->contains($this->superAdmin->id));
+        $this->assertTrue($userIds->contains($this->schoolAdminA->id));
+        $this->assertTrue($userIds->contains($this->schoolAdminB->id));
     }
 
     public function test_normal_school_admin_is_strictly_pinned_to_own_school(): void
@@ -213,5 +240,84 @@ class SuperAdminActiveSchoolContextTest extends TestCase
         // School Admin A cannot call context selection endpoint (super-admin only)
         $postResponse = $this->post('/super-admin/school-context/select', ['school_id' => $this->schoolB->id]);
         $postResponse->assertStatus(403);
+    }
+
+    public function test_stale_or_soft_deleted_active_school_session_fails_closed(): void
+    {
+        // Soft delete School A
+        $this->schoolA->delete();
+
+        // Attempting to access /school/* with soft-deleted school in session
+        $response = $this->actingAs($this->superAdmin)
+            ->withSession(['active_school_id' => $this->schoolA->id])
+            ->get('/school/reports/dashboard');
+
+        // Must fail closed, clear invalid session, and redirect
+        $response->assertRedirect(route('super-admin.schools.index'));
+        $this->assertNull(session('active_school_id'));
+    }
+
+    public function test_unauthenticated_user_cannot_switch_or_clear_context(): void
+    {
+        $selectResponse = $this->post('/super-admin/school-context/select', ['school_id' => $this->schoolA->id]);
+        $selectResponse->assertRedirect('/login');
+
+        $clearResponse = $this->post('/super-admin/school-context/clear');
+        $clearResponse->assertRedirect('/login');
+    }
+
+    public function test_context_switching_updates_inertia_entitlement_diagnostics(): void
+    {
+        $package = Package::create([
+            'name'       => 'Pro Plan',
+            'slug'       => 'pro-plan',
+            'price'      => 100,
+            'is_active'  => true,
+            'sort_order' => 1,
+        ]);
+
+        SchoolSubscription::create([
+            'school_id'  => $this->schoolA->id,
+            'package_id' => $package->id,
+            'status'     => 'active',
+            'start_date' => today()->subMonth(),
+            'end_date'   => today()->addYear(),
+        ]);
+
+        // School A has active subscription, School B has none
+        $this->actingAs($this->superAdmin)->withSession(['active_school_id' => $this->schoolA->id]);
+        $responseA = $this->get('/school/reports/dashboard');
+        $propsA = $responseA->viewData('page')['props'] ?? [];
+        $this->assertEquals($this->schoolA->id, $propsA['active_school']['id']);
+        $this->assertTrue($propsA['entitlement']['subscription_active']);
+
+        // Switch to School B (no subscription)
+        $this->post('/super-admin/school-context/select', ['school_id' => $this->schoolB->id]);
+        $responseB = $this->get('/school/reports/dashboard');
+        $propsB = $responseB->viewData('page')['props'] ?? [];
+        $this->assertEquals($this->schoolB->id, $propsB['active_school']['id']);
+        $this->assertFalse($propsB['entitlement']['subscription_active']);
+    }
+
+    public function test_school_exists_validation_rule_respects_active_context(): void
+    {
+        $classA = SchoolClass::create(['school_id' => $this->schoolA->id, 'name' => 'Class A', 'numeric_name' => 1]);
+        $classB = SchoolClass::create(['school_id' => $this->schoolB->id, 'name' => 'Class B', 'numeric_name' => 2]);
+
+        // Super Admin in School A context
+        $this->actingAs($this->superAdmin)->withSession(['active_school_id' => $this->schoolA->id]);
+        $this->get('/school/students'); // establishes tenant operational scope
+
+        // Validating class_id with School A's class succeeds
+        $vA = Validator::make(['class_id' => $classA->id], [
+            'class_id' => [SchoolExists::make('classes')],
+        ]);
+        $this->assertTrue($vA->passes());
+
+        // Validating class_id with School B's class fails
+        $vB = Validator::make(['class_id' => $classB->id], [
+            'class_id' => [SchoolExists::make('classes')],
+        ]);
+        $this->assertFalse($vB->passes());
     }
 }

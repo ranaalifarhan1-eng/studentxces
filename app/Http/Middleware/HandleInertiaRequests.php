@@ -52,7 +52,7 @@ class HandleInertiaRequests extends Middleware
             ],
             'active_school' => fn () => once(function () {
                 $context = app(ActiveSchoolContext::class);
-                $school = $context->getActiveSchool();
+                $school = $context->getSelectedSchool();
                 return $school ? [
                     'id'     => $school->id,
                     'name'   => $school->name,
@@ -71,7 +71,7 @@ class HandleInertiaRequests extends Middleware
             }),
             'entitlement' => fn () => once(function () {
                 $context = app(ActiveSchoolContext::class);
-                $schoolId = $context->getActiveSchoolId();
+                $schoolId = $context->getSelectedSchoolId();
                 if (! $schoolId) {
                     return null;
                 }

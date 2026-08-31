@@ -2,6 +2,7 @@
 
 namespace App\Rules;
 
+use App\Services\ActiveSchoolContext;
 use Closure;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Support\Facades\DB;
@@ -11,7 +12,7 @@ class SchoolExists implements ValidationRule
     /**
      * @param string $table The database table to check against
      * @param string $column The primary/foreign key column (defaults to 'id')
-     * @param int|null $schoolId Specific school ID to enforce (defaults to auth user's school_id)
+     * @param int|null $schoolId Specific school ID to enforce (defaults to canonical ActiveSchoolContext)
      * @param Closure|null $extraQuery Optional additional query constraints
      */
     public function __construct(
@@ -21,7 +22,7 @@ class SchoolExists implements ValidationRule
         protected ?Closure $extraQuery = null
     ) {
         if ($this->schoolId === null && auth()->check()) {
-            $this->schoolId = auth()->user()->school_id;
+            $this->schoolId = app(ActiveSchoolContext::class)->getActiveSchoolId();
         }
     }
 
@@ -41,11 +42,10 @@ class SchoolExists implements ValidationRule
 
         $query = DB::table($this->table)->where($this->column, $value);
 
-        // Enforce school_id scoping if schoolId is available (or user is not super-admin)
-        $effectiveSchoolId = $this->schoolId ?? auth()->user()?->school_id;
-        $isSuperAdmin = auth()->check() && auth()->user()->hasRole('super-admin');
+        // Enforce school_id scoping from explicit parameter or canonical active context
+        $effectiveSchoolId = $this->schoolId ?? app(ActiveSchoolContext::class)->getActiveSchoolId();
 
-        if ($effectiveSchoolId !== null && (! $isSuperAdmin || $this->schoolId !== null)) {
+        if ($effectiveSchoolId !== null) {
             $query->where('school_id', $effectiveSchoolId);
         }
 

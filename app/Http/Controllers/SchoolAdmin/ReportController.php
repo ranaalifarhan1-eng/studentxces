@@ -35,7 +35,7 @@ class ReportController extends Controller
             in_array($role, ['school-admin', 'principal']) => $this->adminDashboard($sid),
             $role === 'teacher'                             => $this->teacherDashboard($sid),
             $role === 'accountant'                          => $this->accountantDashboard($sid),
-            $role === 'super-admin'                         => $this->superAdminDashboard(),
+            $role === 'super-admin'                         => $this->adminDashboard($sid),
             default                                         => $this->adminDashboard($sid),
         };
 

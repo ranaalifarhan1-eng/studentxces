@@ -10,9 +10,38 @@ class ActiveSchoolContext
     public const SESSION_KEY = 'active_school_id';
 
     /**
+     * Flag indicating whether execution is currently inside tenant operational scope (/school/*).
+     */
+    protected bool $inTenantScope = false;
+
+    /**
+     * Set explicit tenant operational scope flag.
+     */
+    public function setTenantOperationalScope(bool $active): void
+    {
+        $this->inTenantScope = $active;
+    }
+
+    /**
+     * Check whether current execution is within tenant operational scope.
+     */
+    public function isTenantOperationalScope(): bool
+    {
+        if ($this->inTenantScope) {
+            return true;
+        }
+
+        if (function_exists('request') && request() && request()->is('school/*')) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Resolves the active school ID for the current authenticated user.
      * - Tenant users: Strictly returns auth()->user()->school_id.
-     * - Super Admin: Returns validated session('active_school_id') or null.
+     * - Super Admin: Returns validated session('active_school_id') when in tenant operational scope, or null.
      */
     public function getActiveSchoolId(): ?int
     {
@@ -26,7 +55,28 @@ class ActiveSchoolContext
             return $user->school_id ? (int) $user->school_id : null;
         }
 
-        // Super Admin: resolve from server session
+        // Super Admin: Only scope queries when in tenant operational scope
+        if (! $this->isTenantOperationalScope()) {
+            return null;
+        }
+
+        return $this->getSelectedSchoolId();
+    }
+
+    /**
+     * Resolves the selected School ID from Super Admin session, validating it exists and is not soft-deleted.
+     */
+    public function getSelectedSchoolId(): ?int
+    {
+        $user = Auth::user();
+        if (! $user) {
+            return null;
+        }
+
+        if (! $user->hasRole('super-admin')) {
+            return $user->school_id ? (int) $user->school_id : null;
+        }
+
         $sessionId = session(self::SESSION_KEY);
         if (! $sessionId) {
             return null;
@@ -34,8 +84,8 @@ class ActiveSchoolContext
 
         $schoolId = (int) $sessionId;
 
-        // Verify school still exists and is not soft-deleted
-        $exists = School::where('id', $schoolId)->exists();
+        // Verify school exists and is NOT soft-deleted
+        $exists = School::where('id', $schoolId)->whereNull('deleted_at')->exists();
         if (! $exists) {
             session()->forget(self::SESSION_KEY);
             return null;
@@ -54,6 +104,15 @@ class ActiveSchoolContext
     }
 
     /**
+     * Resolves the selected School model (available across both tenant and platform UI).
+     */
+    public function getSelectedSchool(): ?School
+    {
+        $schoolId = $this->getSelectedSchoolId();
+        return $schoolId ? School::find($schoolId) : null;
+    }
+
+    /**
      * Set active school context for Super Admin.
      */
     public function setActiveSchoolId(int $schoolId): bool
@@ -63,9 +122,9 @@ class ActiveSchoolContext
             throw new \Illuminate\Auth\Access\AuthorizationException('Only Super Admins can set active school context.');
         }
 
-        $school = School::find($schoolId);
+        $school = School::where('id', $schoolId)->whereNull('deleted_at')->first();
         if (! $school) {
-            throw new \InvalidArgumentException("School with ID {$schoolId} does not exist.");
+            throw new \InvalidArgumentException("School with ID {$schoolId} does not exist or has been deleted.");
         }
 
         session([self::SESSION_KEY => $school->id]);
@@ -101,7 +160,7 @@ class ActiveSchoolContext
     }
 
     /**
-     * Check if an active school context is established.
+     * Check if an active school context is established in tenant scope.
      */
     public function hasActiveSchool(): bool
     {

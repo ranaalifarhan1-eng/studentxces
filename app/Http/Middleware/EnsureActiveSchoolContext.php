@@ -25,7 +25,10 @@ class EnsureActiveSchoolContext
             return redirect()->route('login');
         }
 
-        // For Super Admin: Fail-closed if no school context is actively selected
+        // Enable tenant operational scope for the duration of this request
+        $this->context->setTenantOperationalScope(true);
+
+        // For Super Admin: Fail-closed if no valid active school context is selected
         if ($user->hasRole('super-admin')) {
             if (! $this->context->hasActiveSchool()) {
                 if ($request->expectsJson()) {

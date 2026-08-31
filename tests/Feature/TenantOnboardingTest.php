@@ -23,6 +23,17 @@ class TenantOnboardingTest extends TestCase
 
         Role::firstOrCreate(['name' => 'super-admin', 'guard_name' => 'web']);
         Role::firstOrCreate(['name' => 'school-admin', 'guard_name' => 'web']);
+
+        $disk = Storage::disk(config()->has('filesystems.disks.private') ? 'private' : 'local');
+        $disk->delete($disk->files('onboarding_manifests'));
+    }
+
+    protected function tearDown(): void
+    {
+        $disk = Storage::disk(config()->has('filesystems.disks.private') ? 'private' : 'local');
+        $disk->delete($disk->files('onboarding_manifests'));
+
+        parent::tearDown();
     }
 
     public function test_dry_run_performs_validation_and_creates_zero_records_without_password_prompt(): void
@@ -120,6 +131,33 @@ class TenantOnboardingTest extends TestCase
         $this->assertEquals('2027-06-30', $academicYear->end_date->format('Y-m-d'));
     }
 
+    public function test_invalid_short_password_fails_and_creates_zero_manifests_and_zero_db_rows(): void
+    {
+        $disk = Storage::disk(config()->has('filesystems.disks.private') ? 'private' : 'local');
+        $initialManifestCount = count($disk->files('onboarding_manifests'));
+
+        $this->artisan('tenant:onboard', [
+            '--name'                => 'Lahore Cambridge School',
+            '--slug'                => 'lahore-cambridge-school',
+            '--admin-name'          => 'Admin Name',
+            '--admin-email'         => 'admin@lahorecambridge.com',
+            '--academic-year-name'  => '2026-2027',
+            '--academic-start'      => '2026-08-01',
+            '--academic-end'        => '2027-06-30',
+            '--execute'             => true,
+        ])
+            ->expectsQuestion('Enter initial School Admin temporary password (min 8 chars):', 'short')
+            ->expectsOutputToContain('School Admin password is required and must be at least 8 characters')
+            ->assertExitCode(1);
+
+        $this->assertEquals(0, School::count());
+        $this->assertEquals(0, User::count());
+        $this->assertEquals(0, AcademicYear::count());
+
+        // Zero manifests created for rejected password attempt
+        $this->assertCount($initialManifestCount, $disk->files('onboarding_manifests'));
+    }
+
     public function test_duplicate_slug_fails_validation_with_zero_records(): void
     {
         School::create([
@@ -138,7 +176,6 @@ class TenantOnboardingTest extends TestCase
             '--academic-end'        => '2027-06-30',
             '--execute'             => true,
         ])
-            ->expectsQuestion('Enter initial School Admin temporary password (min 8 chars):', 'Password123!')
             ->expectsOutputToContain('Onboarding validation failed')
             ->assertExitCode(1);
 
@@ -165,7 +202,6 @@ class TenantOnboardingTest extends TestCase
             '--academic-end'        => '2027-06-30',
             '--execute'             => true,
         ])
-            ->expectsQuestion('Enter initial School Admin temporary password (min 8 chars):', 'Password123!')
             ->expectsOutputToContain("A school with the name 'Lahore Cambridge School' already exists.")
             ->assertExitCode(1);
 
@@ -188,7 +224,6 @@ class TenantOnboardingTest extends TestCase
             '--academic-end'        => '2027-06-30',
             '--execute'             => true,
         ])
-            ->expectsQuestion('Enter initial School Admin temporary password (min 8 chars):', 'Password123!')
             ->expectsOutputToContain('Onboarding validation failed')
             ->assertExitCode(1);
 
@@ -210,7 +245,6 @@ class TenantOnboardingTest extends TestCase
             '--academic-end'        => '2027-06-30',
             '--execute'             => true,
         ])
-            ->expectsQuestion('Enter initial School Admin temporary password (min 8 chars):', 'Password123!')
             ->expectsOutputToContain('not a valid IANA timezone identifier')
             ->assertExitCode(1);
 
@@ -220,7 +254,6 @@ class TenantOnboardingTest extends TestCase
 
     public function test_missing_school_admin_role_fails_validation_with_zero_records(): void
     {
-        // Delete school-admin role
         Role::where('name', 'school-admin')->delete();
 
         $this->artisan('tenant:onboard', [
@@ -233,7 +266,6 @@ class TenantOnboardingTest extends TestCase
             '--academic-end'        => '2027-06-30',
             '--execute'             => true,
         ])
-            ->expectsQuestion('Enter initial School Admin temporary password (min 8 chars):', 'Password123!')
             ->expectsOutputToContain("Required platform role 'school-admin' does not exist.")
             ->assertExitCode(1);
 
@@ -252,7 +284,6 @@ class TenantOnboardingTest extends TestCase
             '--academic-end'        => '2026-08-01', // end before start!
             '--execute'             => true,
         ])
-            ->expectsQuestion('Enter initial School Admin temporary password (min 8 chars):', 'Password123!')
             ->expectsOutputToContain('The academic year end date must be after the start date')
             ->assertExitCode(1);
 
@@ -296,7 +327,6 @@ class TenantOnboardingTest extends TestCase
         $service = app(TenantOnboardingService::class);
         $disk = Storage::disk(config()->has('filesystems.disks.private') ? 'private' : 'local');
 
-        // Pre-create matching School, User, AcademicYear in DB
         $school = School::create([
             'name'     => 'Reconcile Academy',
             'slug'     => 'reconcile-academy',
@@ -324,8 +354,8 @@ class TenantOnboardingTest extends TestCase
             'is_current' => true,
         ]);
 
-        // Write a PENDING manifest file
-        $manifestPath = 'onboarding_manifests/onboard_test_reconcile.json';
+        $manifestFilename = 'onboard_test_reconcile.json';
+        $manifestPath = "onboarding_manifests/{$manifestFilename}";
         $pendingManifest = [
             'execution_id'       => 'onboard_test_123',
             'timestamp'          => now()->toIso8601String(),
@@ -343,20 +373,76 @@ class TenantOnboardingTest extends TestCase
         ];
         $disk->put($manifestPath, json_encode($pendingManifest));
 
-        // Run reconciliation
-        $result = $service->reconcileManifest($manifestPath);
-        $this->assertEquals('RECONCILED', $result['status']);
-        $this->assertEquals($school->id, $result['school_id']);
-        $this->assertEquals($admin->id, $result['admin_user_id']);
-        $this->assertEquals($year->id, $result['academic_year_id']);
+        // Run reconciliation via command
+        $this->artisan('tenant:onboard', ['--reconcile' => $manifestFilename])
+            ->expectsOutputToContain('RECONCILED')
+            ->assertExitCode(0);
 
         // Assert file updated to COMMITTED
         $saved = json_decode($disk->get($manifestPath), true);
         $this->assertEquals('COMMITTED', $saved['status']);
 
         // Idempotent check: Re-reconciling returns ALREADY_COMMITTED
-        $idempotentResult = $service->reconcileManifest($manifestPath);
+        $idempotentResult = $service->reconcileManifest($manifestFilename);
         $this->assertEquals('ALREADY_COMMITTED', $idempotentResult['status']);
+    }
+
+    public function test_reconciliation_rejects_path_traversal_and_outside_paths(): void
+    {
+        $service = app(TenantOnboardingService::class);
+
+        // 1. Path traversal
+        $resTraversal = $service->reconcileManifest('../../../outside.json');
+        $this->assertEquals('PATH_TRAVERSAL_BLOCKED', $resTraversal['status']);
+
+        // 2. Absolute Linux path
+        $resAbsLinux = $service->reconcileManifest('/etc/passwd');
+        $this->assertEquals('PATH_TRAVERSAL_BLOCKED', $resAbsLinux['status']);
+
+        // 3. Absolute Windows path
+        $resAbsWin = $service->reconcileManifest('C:/test/file.json');
+        $this->assertEquals('PATH_TRAVERSAL_BLOCKED', $resAbsWin['status']);
+
+        // 4. Non-JSON extension
+        $resNonJson = $service->reconcileManifest('test_file.txt');
+        $this->assertEquals('INVALID_MANIFEST_PATH', $resNonJson['status']);
+    }
+
+    public function test_reconciliation_requires_school_admin_role_and_exact_school_linkage(): void
+    {
+        $service = app(TenantOnboardingService::class);
+        $disk = Storage::disk(config()->has('filesystems.disks.private') ? 'private' : 'local');
+
+        $school = School::create([
+            'name'     => 'Mismatch Academy',
+            'slug'     => 'mismatch-academy',
+            'status'   => 'active',
+        ]);
+
+        // User belongs to another school (foreign school ID 999)
+        $admin = User::create([
+            'name'      => 'Mismatch Admin',
+            'email'     => 'mismatch@example.com',
+            'password'  => Hash::make('Secret123!'),
+            'school_id' => 999, // foreign!
+            'status'    => 'active',
+        ]);
+        $admin->assignRole('school-admin');
+
+        $manifestFilename = 'onboard_test_mismatch.json';
+        $manifestPath = "onboarding_manifests/{$manifestFilename}";
+        $pendingManifest = [
+            'execution_id'       => 'onboard_test_789',
+            'status'             => 'PENDING',
+            'school_name'        => 'Mismatch Academy',
+            'school_slug'        => 'mismatch-academy',
+            'admin_email'        => 'mismatch@example.com',
+            'academic_year_name' => '2026-2027',
+        ];
+        $disk->put($manifestPath, json_encode($pendingManifest));
+
+        $result = $service->reconcileManifest($manifestFilename);
+        $this->assertEquals('AMBIGUOUS_MANUAL_REVIEW_REQUIRED', $result['status']);
     }
 
     public function test_ambiguous_manifest_refuses_automatic_reconciliation(): void
@@ -364,14 +450,14 @@ class TenantOnboardingTest extends TestCase
         $service = app(TenantOnboardingService::class);
         $disk = Storage::disk(config()->has('filesystems.disks.private') ? 'private' : 'local');
 
-        // Pre-create only School without matching user
         School::create([
             'name'     => 'Partial Academy',
             'slug'     => 'partial-academy',
             'status'   => 'active',
         ]);
 
-        $manifestPath = 'onboarding_manifests/onboard_test_ambiguous.json';
+        $manifestFilename = 'onboard_test_ambiguous.json';
+        $manifestPath = "onboarding_manifests/{$manifestFilename}";
         $pendingManifest = [
             'execution_id'       => 'onboard_test_456',
             'status'             => 'PENDING',
@@ -382,7 +468,7 @@ class TenantOnboardingTest extends TestCase
         ];
         $disk->put($manifestPath, json_encode($pendingManifest));
 
-        $result = $service->reconcileManifest($manifestPath);
+        $result = $service->reconcileManifest($manifestFilename);
         $this->assertEquals('AMBIGUOUS_MANUAL_REVIEW_REQUIRED', $result['status']);
     }
 

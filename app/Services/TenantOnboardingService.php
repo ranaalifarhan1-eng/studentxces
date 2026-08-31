@@ -111,6 +111,7 @@ class TenantOnboardingService
         $data = $this->prepareData($rawInput);
         $validator = $this->validate($data, $execute);
 
+        // Fail BEFORE creating any manifest or starting any transaction
         if ($validator->fails()) {
             return [
                 'status'  => 'VALIDATION_FAILED',
@@ -120,7 +121,7 @@ class TenantOnboardingService
             ];
         }
 
-        // Dry-run / Simulation mode: Zero database mutations
+        // Dry-run / Simulation mode: Zero database mutations and zero manifests
         if (! $execute) {
             return [
                 'status'    => 'DRY_RUN',
@@ -153,6 +154,7 @@ class TenantOnboardingService
             'academic_year_id'   => null,
         ];
 
+        // Write PENDING manifest only after all validations (including password) have passed
         $this->writeManifest($manifestFilename, $manifest);
 
         try {
@@ -251,19 +253,37 @@ class TenantOnboardingService
 
     /**
      * Reconciles an incomplete or PENDING onboarding manifest against database state.
+     * Restricts file resolution strictly to canonical storage/app/private/onboarding_manifests/ directory.
      */
-    public function reconcileManifest(string $manifestPath): array
+    public function reconcileManifest(string $target): array
     {
-        $disk = Storage::disk(config()->has('filesystems.disks.private') ? 'private' : 'local');
-
-        if (! $disk->exists($manifestPath)) {
+        // Path traversal and absolute path protection
+        if (str_contains($target, '..') || str_contains($target, ':') || str_starts_with($target, '/') || str_starts_with($target, '\\')) {
             return [
-                'status'  => 'MANIFEST_NOT_FOUND',
-                'message' => "Manifest file '{$manifestPath}' does not exist.",
+                'status'  => 'PATH_TRAVERSAL_BLOCKED',
+                'message' => 'Reconciliation path traversal or absolute paths are strictly blocked.',
             ];
         }
 
-        $raw = $disk->get($manifestPath);
+        $filename = basename($target);
+        if (! str_ends_with($filename, '.json') || ($target !== $filename && $target !== "onboarding_manifests/{$filename}")) {
+            return [
+                'status'  => 'INVALID_MANIFEST_PATH',
+                'message' => 'Reconciliation is restricted exclusively to .json files inside the canonical onboarding_manifests/ directory.',
+            ];
+        }
+
+        $canonicalPath = "onboarding_manifests/{$filename}";
+        $disk = Storage::disk(config()->has('filesystems.disks.private') ? 'private' : 'local');
+
+        if (! $disk->exists($canonicalPath)) {
+            return [
+                'status'  => 'MANIFEST_NOT_FOUND',
+                'message' => "Manifest file '{$canonicalPath}' does not exist.",
+            ];
+        }
+
+        $raw = $disk->get($canonicalPath);
         $manifest = json_decode($raw, true);
 
         if (! is_array($manifest)) {
@@ -291,8 +311,11 @@ class TenantOnboardingService
 
         // Look for existing School, User, and AcademicYear
         $schoolSlug = $manifest['school_slug'] ?? null;
+        $schoolName = $manifest['school_name'] ?? null;
         $adminEmail = $manifest['admin_email'] ?? null;
         $academicName = $manifest['academic_year_name'] ?? null;
+        $academicStart = $manifest['academic_start'] ?? null;
+        $academicEnd = $manifest['academic_end'] ?? null;
 
         if (! $schoolSlug || ! $adminEmail) {
             return [
@@ -312,14 +335,38 @@ class TenantOnboardingService
             ];
         }
 
-        // Both must exist and be consistently linked
-        if ($school && $adminUser && (int) $adminUser->school_id === (int) $school->id) {
+        // Strict multi-model coherence validation:
+        // 1. School must exist and match name
+        // 2. Admin User must exist, belong to that exact school, and have 'school-admin' role
+        // 3. Academic Year must exist, belong to that exact school, and match dates
+        if ($school && $adminUser && (int) $adminUser->school_id === (int) $school->id && $adminUser->hasRole('school-admin')) {
+            if ($schoolName && $school->name !== $schoolName) {
+                return [
+                    'status'  => 'AMBIGUOUS_MANUAL_REVIEW_REQUIRED',
+                    'message' => 'School name mismatch with manifest metadata. Manual operator review required.',
+                ];
+            }
+
             $academicYear = AcademicYear::where('school_id', $school->id)
                 ->where('name', $academicName)
                 ->whereNull('deleted_at')
                 ->first();
 
-            if ($academicYear) {
+            if ($academicYear && (int) $academicYear->school_id === (int) $school->id) {
+                if ($academicStart && $academicYear->start_date->format('Y-m-d') !== $academicStart) {
+                    return [
+                        'status'  => 'AMBIGUOUS_MANUAL_REVIEW_REQUIRED',
+                        'message' => 'Academic year start date mismatch. Manual operator review required.',
+                    ];
+                }
+
+                if ($academicEnd && $academicYear->end_date->format('Y-m-d') !== $academicEnd) {
+                    return [
+                        'status'  => 'AMBIGUOUS_MANUAL_REVIEW_REQUIRED',
+                        'message' => 'Academic year end date mismatch. Manual operator review required.',
+                    ];
+                }
+
                 // Promote to COMMITTED
                 $manifest['status'] = 'COMMITTED';
                 $manifest['school_id'] = $school->id;
@@ -327,7 +374,7 @@ class TenantOnboardingService
                 $manifest['academic_year_id'] = $academicYear->id;
                 $manifest['reconciled_at'] = now()->toIso8601String();
 
-                $this->writeManifest($manifestPath, $manifest);
+                $this->writeManifest($canonicalPath, $manifest);
 
                 return [
                     'status'           => 'RECONCILED',

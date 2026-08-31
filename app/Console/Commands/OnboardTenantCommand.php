@@ -26,17 +26,17 @@ class OnboardTenantCommand extends Command
         {--academic-end= : Academic year end date (YYYY-MM-DD)}
         {--execute : Commit onboarding mutations to the database}
         {--dry-run : Perform validation and simulation without database mutations}
-        {--reconcile= : Reconcile a pending onboarding manifest file}';
+        {--reconcile= : Reconcile a pending onboarding manifest filename}';
 
     protected $description = 'Safely and transactionally onboard a new tenant foundation (School, School Admin, Academic Year)';
 
     public function handle(TenantOnboardingService $service): int
     {
         // Manifest reconciliation option
-        $reconcilePath = $this->option('reconcile');
-        if ($reconcilePath) {
-            $this->info("Reconciling manifest: {$reconcilePath}");
-            $res = $service->reconcileManifest($reconcilePath);
+        $reconcileTarget = $this->option('reconcile');
+        if ($reconcileTarget) {
+            $this->info("Reconciling manifest: {$reconcileTarget}");
+            $res = $service->reconcileManifest($reconcileTarget);
             if (in_array($res['status'], ['RECONCILED', 'ALREADY_COMMITTED'])) {
                 $this->info("✓ [{$res['status']}] {$res['message']}");
                 if (! empty($res['school_id'])) {
@@ -98,6 +98,17 @@ class OnboardTenantCommand extends Command
             ['Academic Period', ($prepared['academic_start'] && $prepared['academic_end']) ? "{$prepared['academic_start']} to {$prepared['academic_end']}" : '<fg=red>[MISSING]</>'],
         ]);
 
+        // 1. First validate normal non-password inputs
+        $preValidator = $service->validate($prepared, false);
+        if ($preValidator->fails()) {
+            $this->error('Onboarding validation failed:');
+            foreach ($preValidator->errors()->all() as $error) {
+                $this->line("  - <fg=red>{$error}</>");
+            }
+            return self::FAILURE;
+        }
+
+        // 2. If in execute mode, securely request and validate the password
         if ($execute) {
             $password = $this->secret('Enter initial School Admin temporary password (min 8 chars):');
             if (empty($password) || strlen($password) < 8) {

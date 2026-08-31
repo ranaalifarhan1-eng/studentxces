@@ -159,6 +159,7 @@ class TenantSecurityHardeningTest extends TestCase
         ]);
 
         $response = $this->actingAs($this->superAdmin)
+            ->withSession(['active_school_id' => $this->schoolB->id])
             ->delete('/school/staff/documents/' . $docB->id);
 
         $response->assertStatus(302);

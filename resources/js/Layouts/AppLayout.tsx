@@ -45,6 +45,7 @@ export default function AppLayout({ children, title, breadcrumbs }: AppLayoutPro
     useEffect(() => {
         if (flash?.success) toast.success(flash.success);
         if (flash?.error) toast.error(flash.error);
+        if (flash?.warning) toast.warning(flash.warning);
     }, [flash]);
 
     return (

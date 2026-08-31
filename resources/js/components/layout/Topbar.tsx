@@ -29,7 +29,7 @@ interface TopbarProps {
 }
 
 export default function Topbar({ title, breadcrumbs }: TopbarProps) {
-    const { auth } = usePage<PageProps>().props;
+    const { auth, active_school } = usePage<PageProps>().props;
     const { theme, setTheme } = useAuthStore();
     const { toggleSidebar } = useUIStore();
 
@@ -78,6 +78,24 @@ export default function Topbar({ title, breadcrumbs }: TopbarProps) {
 
             {/* Right */}
             <div className="flex items-center gap-2">
+                {/* Active school context badge for Super Admin */}
+                {user?.role === 'super-admin' && active_school && (
+                    <div className="flex items-center gap-2 px-2.5 py-1 bg-indigo-50 dark:bg-indigo-950/60 border border-indigo-200 dark:border-indigo-800 rounded-lg text-xs mr-1">
+                        <span className="font-medium text-indigo-700 dark:text-indigo-300 flex items-center gap-1.5">
+                            <span className="w-2 h-2 rounded-full bg-indigo-500 animate-pulse" />
+                            <span className="hidden sm:inline">Managing:</span> <strong>{active_school.name}</strong>
+                        </span>
+                        <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-5 px-1.5 text-[11px] text-slate-500 hover:text-red-600 dark:text-slate-400 dark:hover:text-red-400"
+                            onClick={() => router.post('/super-admin/school-context/clear')}
+                        >
+                            Exit
+                        </Button>
+                    </div>
+                )}
+
                 {/* Theme toggle */}
                 <Button
                     variant="ghost"

@@ -3,6 +3,8 @@
 namespace App\Http\Middleware;
 
 use App\Models\PlatformSetting;
+use App\Services\ActiveSchoolContext;
+use App\Services\SchoolEntitlementResolver;
 use Illuminate\Http\Request;
 use Inertia\Middleware;
 
@@ -48,19 +50,37 @@ class HandleInertiaRequests extends Middleware
                     'school_id' => $request->user()->school_id ?? null,
                 ] : null,
             ],
+            'active_school' => fn () => once(function () {
+                $context = app(ActiveSchoolContext::class);
+                $school = $context->getActiveSchool();
+                return $school ? [
+                    'id'     => $school->id,
+                    'name'   => $school->name,
+                    'slug'   => $school->slug,
+                    'status' => $school->status,
+                ] : null;
+            }),
             'flash' => [
                 'success' => fn () => session('success'),
                 'error'   => fn () => session('error'),
+                'warning' => fn () => session('warning'),
             ],
             'faviconUrl' => fn () => once(function () {
                 $path = PlatformSetting::get('platform_favicon');
                 return $path ? asset('storage/' . $path) : null;
             }),
-            'entitlement' => fn () => $request->user()?->school_id ? [
-                'mode'                => config('entitlement.mode', 'off'),
-                'subscription_active' => app(\App\Services\SchoolEntitlementResolver::class)->hasActiveSubscription($request->user()->school_id),
-                'effective_modules'   => app(\App\Services\SchoolEntitlementResolver::class)->getEffectiveModules($request->user()->school_id),
-            ] : null,
+            'entitlement' => fn () => once(function () {
+                $context = app(ActiveSchoolContext::class);
+                $schoolId = $context->getActiveSchoolId();
+                if (! $schoolId) {
+                    return null;
+                }
+                return [
+                    'mode'                => config('entitlement.mode', 'off'),
+                    'subscription_active' => app(SchoolEntitlementResolver::class)->hasActiveSubscription($schoolId),
+                    'effective_modules'   => app(SchoolEntitlementResolver::class)->getEffectiveModules($schoolId),
+                ];
+            }),
         ];
     }
 }

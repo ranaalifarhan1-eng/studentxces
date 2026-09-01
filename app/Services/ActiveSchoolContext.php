@@ -39,12 +39,30 @@ class ActiveSchoolContext
     }
 
     /**
-     * Resolves the active school ID for the current authenticated user.
+     * Resolves the school directly from the request host header if mapped to an active tenant domain.
+     */
+    public function getHostResolvedSchool(): ?School
+    {
+        if (function_exists('request') && request()) {
+            $host = request()->getHost();
+            return app(TenantDomainResolver::class)->resolveFromHost($host);
+        }
+        return null;
+    }
+
+    /**
+     * Resolves the active school ID for the current context.
+     * - Host-resolved tenant domain: Strictly returns resolved school ID.
      * - Tenant users: Strictly returns auth()->user()->school_id.
      * - Super Admin: Returns validated session('active_school_id') when in tenant operational scope, or null.
      */
     public function getActiveSchoolId(): ?int
     {
+        $hostSchool = $this->getHostResolvedSchool();
+        if ($hostSchool) {
+            return $hostSchool->id;
+        }
+
         $user = Auth::user();
         if (! $user) {
             return null;
@@ -64,10 +82,15 @@ class ActiveSchoolContext
     }
 
     /**
-     * Resolves the selected School ID from Super Admin session, validating it exists and is not soft-deleted.
+     * Resolves the selected School ID from host or Super Admin session, validating it exists and is active.
      */
     public function getSelectedSchoolId(): ?int
     {
+        $hostSchool = $this->getHostResolvedSchool();
+        if ($hostSchool) {
+            return $hostSchool->id;
+        }
+
         $user = Auth::user();
         if (! $user) {
             return null;
@@ -108,6 +131,11 @@ class ActiveSchoolContext
      */
     public function getSelectedSchool(): ?School
     {
+        $hostSchool = $this->getHostResolvedSchool();
+        if ($hostSchool) {
+            return $hostSchool;
+        }
+
         $schoolId = $this->getSelectedSchoolId();
         return $schoolId ? School::find($schoolId) : null;
     }

@@ -7,6 +7,7 @@ use App\Http\Controllers\SchoolAdmin\FeeCategoryController;
 use App\Http\Controllers\SchoolAdmin\FeePaymentController;
 use App\Http\Controllers\SchoolAdmin\FeeStructureController;
 use App\Http\Controllers\SchoolAdmin\CommunicationController;
+use App\Http\Controllers\SchoolAdmin\DomainController;
 use App\Http\Controllers\SchoolAdmin\IntegrationController;
 use App\Http\Controllers\SchoolAdmin\ReportController;
 use App\Http\Controllers\SchoolAdmin\HomeworkController;
@@ -335,6 +336,13 @@ Route::middleware('auth')->group(function () {
             Route::delete('settings/admins/{user}',             [SchoolUserController::class, 'destroy'])->name('settings.admins.destroy');
             Route::patch('settings/admins/{user}/suspend',      [SchoolUserController::class, 'suspend'])->name('settings.admins.suspend');
             Route::patch('settings/admins/{user}/activate',     [SchoolUserController::class, 'activate'])->name('settings.admins.activate');
+
+            // Domains Module
+            Route::get('settings/domains',                      [DomainController::class, 'index'])->name('settings.domains.index');
+            Route::post('settings/domains',                     [DomainController::class, 'store'])->name('settings.domains.store');
+            Route::post('settings/domains/{domain}/verify',     [DomainController::class, 'verify'])->name('settings.domains.verify');
+            Route::patch('settings/domains/{domain}/primary',   [DomainController::class, 'makePrimary'])->name('settings.domains.primary');
+            Route::delete('settings/domains/{domain}',          [DomainController::class, 'destroy'])->name('settings.domains.destroy');
         });
 
     /*

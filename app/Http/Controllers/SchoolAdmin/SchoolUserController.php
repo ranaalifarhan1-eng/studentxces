@@ -74,6 +74,10 @@ class SchoolUserController extends Controller
             'status'   => 'required|in:active,inactive',
         ]);
 
+        if ($data['role'] === 'super-admin' || ! in_array($data['role'], $this->allowedRoles(), true)) {
+            abort(403, 'Unauthorized role assignment.');
+        }
+
         $user = User::create([
             'name'      => $data['name'],
             'email'     => $data['email'],
@@ -90,8 +94,8 @@ class SchoolUserController extends Controller
 
     public function update(Request $request, User $user): RedirectResponse
     {
-        // Ensure the user belongs to this school
-        if ($user->school_id !== $this->sid()) {
+        // Ensure the user belongs to this school and is NOT a super-admin
+        if ($user->school_id !== $this->sid() || $user->hasRole('super-admin')) {
             abort(403);
         }
 
@@ -103,6 +107,10 @@ class SchoolUserController extends Controller
             'role'     => ['required', 'string', Rule::in($this->allowedRoles())],
             'status'   => 'required|in:active,inactive,suspended',
         ]);
+
+        if ($data['role'] === 'super-admin' || ! in_array($data['role'], $this->allowedRoles(), true)) {
+            abort(403, 'Unauthorized role assignment.');
+        }
 
         $user->update([
             'name'   => $data['name'],
@@ -122,8 +130,12 @@ class SchoolUserController extends Controller
 
     public function destroy(User $user): RedirectResponse
     {
-        if ($user->school_id !== $this->sid()) {
+        if ($user->school_id !== $this->sid() || $user->hasRole('super-admin')) {
             abort(403);
+        }
+
+        if ($user->id === auth()->id()) {
+            return back()->withErrors(['error' => 'You cannot delete your own account.']);
         }
 
         $user->delete();
@@ -133,8 +145,12 @@ class SchoolUserController extends Controller
 
     public function suspend(User $user): RedirectResponse
     {
-        if ($user->school_id !== $this->sid()) {
+        if ($user->school_id !== $this->sid() || $user->hasRole('super-admin')) {
             abort(403);
+        }
+
+        if ($user->id === auth()->id()) {
+            return back()->withErrors(['error' => 'You cannot suspend your own account.']);
         }
 
         $user->update(['status' => 'suspended']);
@@ -143,7 +159,7 @@ class SchoolUserController extends Controller
 
     public function activate(User $user): RedirectResponse
     {
-        if ($user->school_id !== $this->sid()) {
+        if ($user->school_id !== $this->sid() || $user->hasRole('super-admin')) {
             abort(403);
         }
 

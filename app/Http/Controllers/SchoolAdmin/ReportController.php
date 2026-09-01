@@ -16,11 +16,11 @@ use App\Models\Staff;
 use App\Models\Student;
 use App\Models\Subject;
 use App\Rules\SchoolExists;
+use App\Models\Activity;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
-use Spatie\Activitylog\Models\Activity;
 
 class ReportController extends Controller
 {
@@ -90,14 +90,8 @@ class ReportController extends Controller
             'submissions as pending_count' => fn ($q) => $q->where('status', 'submitted'),
         ])->get()->sum('pending_count');
 
-        $recentActivity = Activity::with('causer')
-            ->where(function ($q) use ($sid) {
-                $q->where('properties->school_id', $sid)
-                  ->orWhereHasMorph('causer', [\App\Models\User::class], fn ($uq) => $uq->where('school_id', $sid))
-                  ->orWhere(function ($subj) use ($sid) {
-                      $subj->where('subject_type', School::class)->where('subject_id', $sid);
-                  });
-            })
+        $recentActivity = Activity::forTenant($sid)
+            ->with('causer')
             ->latest()
             ->take(10)
             ->get();
@@ -379,15 +373,7 @@ class ReportController extends Controller
         $isSuperAdmin = auth()->user()?->hasRole('super-admin');
 
         $logs = Activity::with('causer:id,name,school_id')
-            ->when(! $isSuperAdmin, function ($q) use ($sid) {
-                $q->where(function ($sub) use ($sid) {
-                    $sub->where('properties->school_id', $sid)
-                        ->orWhereHasMorph('causer', [\App\Models\User::class], fn ($uq) => $uq->where('school_id', $sid))
-                        ->orWhere(function ($subj) use ($sid) {
-                            $subj->where('subject_type', School::class)->where('subject_id', $sid);
-                        });
-                });
-            })
+            ->when(! $isSuperAdmin, fn ($q) => $q->forTenant($sid))
             ->when($request->causer_id, fn ($q) => $q->where('causer_id', $request->causer_id))
             ->when($request->subject_type, fn ($q) => $q->where('subject_type', 'like', '%' . $request->subject_type . '%'))
             ->when($request->from_date, fn ($q) => $q->whereDate('created_at', '>=', $request->from_date))
@@ -396,7 +382,10 @@ class ReportController extends Controller
             ->paginate(50)
             ->withQueryString();
 
-        $users = \App\Models\User::when(! $isSuperAdmin, fn ($q) => $q->where('school_id', $sid))
+        $users = \App\Models\User::when(! $isSuperAdmin, function ($q) use ($sid) {
+                $q->where('school_id', $sid)
+                  ->whereDoesntHave('roles', fn ($rq) => $rq->where('name', 'super-admin'));
+            })
             ->orderBy('name')
             ->get(['id', 'name']);
 

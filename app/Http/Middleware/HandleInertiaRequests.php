@@ -54,11 +54,29 @@ class HandleInertiaRequests extends Middleware
                 $context = app(ActiveSchoolContext::class);
                 $school = $context->getSelectedSchool();
                 return $school ? [
-                    'id'     => $school->id,
-                    'name'   => $school->name,
-                    'slug'   => $school->slug,
-                    'status' => $school->status,
+                    'id'       => $school->id,
+                    'name'     => $school->name,
+                    'slug'     => $school->slug,
+                    'status'   => $school->status,
+                    'logo'     => $school->logo,
+                    'logo_url' => $school->logo ? asset('storage/' . $school->logo) : null,
                 ] : null;
+            }),
+            'branding' => fn () => once(function () {
+                $context = app(ActiveSchoolContext::class);
+                $school = $context->getSelectedSchool();
+                $platformName = PlatformSetting::get('platform_name') ?: 'StudentXces';
+                $platformLogo = PlatformSetting::get('platform_logo');
+
+                return [
+                    'platform_name'     => $platformName,
+                    'platform_logo_url' => $platformLogo ? asset('storage/' . $platformLogo) : null,
+                    'app_name'          => $school ? $school->name : $platformName,
+                    'tenant_name'       => $school?->name,
+                    'logo_url'          => $school?->logo ? asset('storage/' . $school->logo) : null,
+                    'is_tenant_context' => (bool) $school,
+                    'active_school_id'  => $school?->id,
+                ];
             }),
             'flash' => [
                 'success' => fn () => session('success'),

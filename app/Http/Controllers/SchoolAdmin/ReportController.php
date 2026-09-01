@@ -408,7 +408,8 @@ class ReportController extends Controller
             ->when($request->to_date,   fn ($q) => $q->whereDate('date', '<=', $request->to_date))
             ->latest('date')->get();
 
-        $pdf = Pdf::loadView('reports.attendance', compact('records'))->setPaper('a4', 'landscape');
+        $school = School::find($sid);
+        $pdf = Pdf::loadView('reports.attendance', compact('records', 'school'))->setPaper('a4', 'landscape');
         return $pdf->download('attendance-report.pdf');
     }
 
@@ -422,7 +423,8 @@ class ReportController extends Controller
             ->whereBetween('payment_date', [$from, $to])
             ->latest('payment_date')->get();
 
-        $pdf = Pdf::loadView('reports.finance', compact('payments', 'from', 'to'))->setPaper('a4', 'landscape');
+        $school = School::find($sid);
+        $pdf = Pdf::loadView('reports.finance', compact('payments', 'from', 'to', 'school'))->setPaper('a4', 'landscape');
         return $pdf->download('finance-report.pdf');
     }
 

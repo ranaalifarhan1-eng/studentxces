@@ -21,10 +21,12 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
     }
 }
 
-const appName = document.title;
-
 createInertiaApp({
-    title: (title) => `${title} - ${appName}`,
+    title: (title) => {
+        if (!title) return 'StudentXces';
+        if (title.includes('|')) return title;
+        return `${title} | StudentXces`;
+    },
     resolve: (name) =>
         resolvePageComponent(
             `./Pages/${name}.tsx`,

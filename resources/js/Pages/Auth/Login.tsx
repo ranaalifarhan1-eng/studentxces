@@ -93,17 +93,23 @@ export default function Login() {
             <div className="w-full max-w-md">
                 {/* Logo / Branding */}
                 <div className="text-center mb-8">
-                    <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-indigo-600 mb-4 shadow-lg">
-                        <svg className="w-8 h-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 14l9-5-9-5-9 5 9 5z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" />
-                        </svg>
-                    </div>
+                    {logoUrl ? (
+                        <div className="inline-flex items-center justify-center mb-4">
+                            <img src={logoUrl} alt={brandName} className="w-14 h-14 rounded-2xl object-contain shadow-lg" />
+                        </div>
+                    ) : (
+                        <div className="inline-flex items-center justify-center w-14 h-14 rounded-2xl bg-indigo-600 mb-4 shadow-lg">
+                            <svg className="w-8 h-8 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 14l9-5-9-5-9 5 9 5z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" />
+                            </svg>
+                        </div>
+                    )}
                     <h1 className="text-2xl font-bold text-slate-900 dark:text-white tracking-tight">
-                        Genius SMS
+                        {brandName}
                     </h1>
                     <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
-                        School Management System
+                        {branding?.tenant_name ? 'School Portal' : 'Smart Educational Platform'}
                     </p>
                 </div>
 
@@ -232,7 +238,7 @@ export default function Login() {
                 </Card>
 
                 <p className="text-center text-xs text-slate-400 dark:text-slate-600 mt-6">
-                    &copy; {new Date().getFullYear()} Genius SMS by xgenious. All rights reserved.
+                    &copy; {new Date().getFullYear()} {branding?.platform_name || 'StudentXces'}. All rights reserved.
                 </p>
             </div>
         </AuthLayout>

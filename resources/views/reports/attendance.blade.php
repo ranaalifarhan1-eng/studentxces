@@ -16,7 +16,7 @@
 </style>
 </head>
 <body>
-<h2>Attendance Report</h2>
+<h2>{{ $school?->name ?? 'StudentXces' }} — Attendance Report</h2>
 <p>Generated: {{ now()->format('d M Y H:i') }} &nbsp;|&nbsp; Total records: {{ $records->count() }}</p>
 <table>
     <thead>

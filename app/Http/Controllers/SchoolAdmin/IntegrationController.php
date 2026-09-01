@@ -83,10 +83,13 @@ class IntegrationController extends Controller
                 'mail.from.name'                => $settings['smtp_from_name']  ?? config('mail.from.name'),
             ]);
 
-            Mail::raw('This is a test email from Genius SMS to verify your SMTP configuration.', function ($msg) use ($request, $settings) {
+            $school = \App\Models\School::find($sid);
+            $schoolName = $school?->name ?? 'StudentXces';
+
+            Mail::raw("This is a test email from {$schoolName} to verify your SMTP configuration.", function ($msg) use ($request, $settings, $schoolName) {
                 $msg->to($request->test_email)
-                    ->subject('Genius SMS — SMTP Test')
-                    ->from($settings['smtp_from_email'] ?? config('mail.from.address'), $settings['smtp_from_name'] ?? 'Genius SMS');
+                    ->subject("{$schoolName} — SMTP Test")
+                    ->from($settings['smtp_from_email'] ?? config('mail.from.address'), $settings['smtp_from_name'] ?? $schoolName);
             });
 
             return back()->with('success', 'Test email sent to ' . $request->test_email);

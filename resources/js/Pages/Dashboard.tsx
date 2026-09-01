@@ -1,10 +1,13 @@
-import { Head, router } from '@inertiajs/react';
+import { Head, router, usePage } from '@inertiajs/react';
 import { useAuthStore } from '@/Stores/useAuthStore';
 import { Button } from '@/components/ui/button';
+import type { PageProps } from '@/Types';
 
 export default function Dashboard() {
+    const { branding } = usePage<PageProps>().props;
     const theme = useAuthStore((s) => s.theme);
     const setTheme = useAuthStore((s) => s.setTheme);
+    const brandName = branding?.app_name || branding?.platform_name || 'StudentXces';
 
     return (
         <>
@@ -18,7 +21,7 @@ export default function Dashboard() {
                         </svg>
                     </div>
                     <h1 className="text-3xl font-bold text-slate-900 dark:text-white">
-                        Genius SMS Dashboard
+                        {brandName} Dashboard
                     </h1>
                     <p className="text-slate-500 dark:text-slate-400">
                         Sprint 1 — Login working. Dashboard coming in Sprint 3+.

@@ -204,9 +204,17 @@ function NavLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
 }
 
 export default function Sidebar() {
-    const { auth } = usePage<PageProps>().props;
+    const { auth, active_school, branding } = usePage<PageProps>().props;
     const { sidebarCollapsed, toggleCollapsed } = useUIStore();
     const role = auth.user?.role ?? '';
+
+    const isSuperAdmin = role === 'super-admin';
+    const brandName = (isSuperAdmin && !active_school)
+        ? (branding?.platform_name || 'StudentXces')
+        : (branding?.tenant_name || active_school?.name || branding?.platform_name || 'StudentXces');
+    const brandLogo = (isSuperAdmin && !active_school)
+        ? (branding?.platform_logo_url || null)
+        : (branding?.logo_url || active_school?.logo_url || null);
 
     const filteredGroups = navGroups
         .map((group) => ({
@@ -227,14 +235,20 @@ export default function Sidebar() {
             >
                 {/* Logo */}
                 <div className={cn('flex items-center h-14 px-4 border-b border-slate-200 dark:border-slate-800', sidebarCollapsed && 'justify-center px-2')}>
-                    <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-indigo-600 shrink-0">
-                        <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 14l9-5-9-5-9 5 9 5z" />
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" />
-                        </svg>
-                    </div>
+                    {brandLogo ? (
+                        <img src={brandLogo} alt={brandName} className="w-8 h-8 rounded-lg object-contain shrink-0" />
+                    ) : (
+                        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-indigo-600 shrink-0">
+                            <svg className="w-5 h-5 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 14l9-5-9-5-9 5 9 5z" />
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M12 14l6.16-3.422a12.083 12.083 0 01.665 6.479A11.952 11.952 0 0012 20.055a11.952 11.952 0 00-6.824-2.998 12.078 12.078 0 01.665-6.479L12 14z" />
+                            </svg>
+                        </div>
+                    )}
                     {!sidebarCollapsed && (
-                        <span className="ml-2.5 font-bold text-slate-900 dark:text-white text-sm tracking-tight">Genius SMS</span>
+                        <span className="ml-2.5 font-bold text-slate-900 dark:text-white text-sm tracking-tight truncate max-w-[170px]" title={brandName}>
+                            {brandName}
+                        </span>
                     )}
                 </div>
 

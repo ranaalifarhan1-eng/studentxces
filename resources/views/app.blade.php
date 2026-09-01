@@ -3,7 +3,7 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title inertia>{{ config('app.name', 'Genius SMS') }}</title>
+        <title inertia>{{ config('app.name', 'StudentXces') }}</title>
         @php
             $platformFavicon = \App\Models\PlatformSetting::get('platform_favicon');
             $faviconHref = $platformFavicon ? asset('storage/' . $platformFavicon) : asset('favicon.ico');

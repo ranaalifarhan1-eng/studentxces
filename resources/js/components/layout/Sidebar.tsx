@@ -6,7 +6,7 @@ import {
     Settings, ChevronLeft, ChevronRight, Layers, Clock, CalendarOff,
     Building2, BadgeCheck, NotebookPen, Video, Megaphone, Mail, Send, Bell,
     PieChart, FileText, TrendingUp, Wrench, ShieldCheck, Plug,
-    CreditCard, Tag,
+    CreditCard, Tag, Globe,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUIStore } from '@/Stores/useUIStore';
@@ -163,6 +163,7 @@ const navGroups: NavGroup[] = [
         title: 'Admin',
         items: [
             { label: 'Settings',      href: '/school/settings',              icon: Settings, roles: ['school-admin'] },
+            { label: 'Domains',       href: '/school/settings/domains',      icon: Globe,    roles: ['school-admin'] },
             { label: 'Settings',      href: '/super-admin/settings',         icon: Settings, roles: ['super-admin'] },
             { label: 'Integrations',  href: '/school/settings/integrations', icon: Plug,     roles: ['super-admin','school-admin'] },
             { label: 'Manage Users',  href: '/school/settings/admins',       icon: UserCog,  roles: ['school-admin'] },

@@ -87,6 +87,21 @@ class LoginController extends Controller
         $request->session()->regenerate();
 
         $user = Auth::user();
+
+        // Host-based login domain isolation
+        $resolvedSchool = app(\App\Services\ActiveSchoolContext::class)->getHostResolvedSchool();
+        if ($resolvedSchool) {
+            if ($user->hasRole('super-admin') || (int) $user->school_id !== (int) $resolvedSchool->id) {
+                Auth::logout();
+                $request->session()->invalidate();
+                $request->session()->regenerateToken();
+
+                throw ValidationException::withMessages([
+                    'email' => 'This account does not have access to this school portal.',
+                ]);
+            }
+        }
+
         $user->update(['last_login_at' => now()]);
 
         activity()

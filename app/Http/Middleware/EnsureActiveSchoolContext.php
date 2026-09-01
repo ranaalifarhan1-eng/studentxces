@@ -46,6 +46,11 @@ class EnsureActiveSchoolContext
             if (! $user->school_id) {
                 abort(403, 'User is not associated with any active school.');
             }
+
+            $hostSchool = $this->context->getHostResolvedSchool();
+            if ($hostSchool && (int) $user->school_id !== (int) $hostSchool->id) {
+                abort(403, 'User is not authorized for this school domain.');
+            }
         }
 
         return $next($request);

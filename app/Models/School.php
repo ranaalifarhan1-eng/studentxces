@@ -52,6 +52,16 @@ class School extends Model
         return $this->logo ? asset('storage/' . $this->logo) : null;
     }
 
+    public function domains(): HasMany
+    {
+        return $this->hasMany(SchoolDomain::class);
+    }
+
+    public function primaryDomain()
+    {
+        return $this->hasOne(SchoolDomain::class)->where('is_primary', true);
+    }
+
     public function scopeActive($query)
     {
         return $query->where('status', 'active');

@@ -1,5 +1,5 @@
 import { useEffect } from 'react';
-import { usePage } from '@inertiajs/react';
+import { Head, usePage } from '@inertiajs/react';
 import { toast } from 'sonner';
 import Sidebar from '@/components/layout/Sidebar';
 import Topbar from '@/components/layout/Topbar';
@@ -16,9 +16,15 @@ interface AppLayoutProps {
 }
 
 export default function AppLayout({ children, title, breadcrumbs }: AppLayoutProps) {
-    const { flash, faviconUrl } = usePage<PageProps>().props;
+    const { flash, faviconUrl, branding, active_school, auth } = usePage<PageProps>().props;
     const theme = useAuthStore((s) => s.theme);
     const { sidebarOpen } = useUIStore();
+
+    const isSuperAdmin = auth?.user?.role === 'super-admin';
+    const brandName = (isSuperAdmin && !active_school)
+        ? (branding?.platform_name || 'StudentXces')
+        : (branding?.tenant_name || active_school?.name || branding?.platform_name || 'StudentXces');
+    const pageTitle = title ? `${title} | ${brandName}` : brandName;
 
     // Favicon sync
     useEffect(() => {
@@ -50,6 +56,7 @@ export default function AppLayout({ children, title, breadcrumbs }: AppLayoutPro
 
     return (
         <div className="flex h-screen overflow-hidden bg-slate-50 dark:bg-slate-950">
+            <Head title={pageTitle} />
             <PageProgress />
             {/* Sidebar */}
             <div className={cn('hidden md:flex', !sidebarOpen && 'md:hidden')}>

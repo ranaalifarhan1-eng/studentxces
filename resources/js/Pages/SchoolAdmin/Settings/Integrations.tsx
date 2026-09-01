@@ -126,7 +126,7 @@ export default function Integrations({ smtp, sms }: Props) {
                                         </div>
                                         <div>
                                             <Label>From Name *</Label>
-                                            <Input value={smtpForm.data.from_name} onChange={e => smtpForm.setData('from_name', e.target.value)} placeholder="Genius School" />
+                                            <Input value={smtpForm.data.from_name} onChange={e => smtpForm.setData('from_name', e.target.value)} placeholder="School Name" />
                                         </div>
                                     </div>
                                     <div>

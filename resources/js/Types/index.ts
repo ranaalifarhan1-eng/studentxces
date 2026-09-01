@@ -40,6 +40,16 @@ export interface AcademicYear {
     is_current: boolean;
 }
 
+export interface BrandingProps {
+    platform_name: string;
+    platform_logo_url: string | null;
+    app_name: string;
+    tenant_name: string | null;
+    logo_url: string | null;
+    is_tenant_context: boolean;
+    active_school_id: number | null;
+}
+
 export interface PageProps {
     auth: {
         user: User | null;
@@ -49,7 +59,10 @@ export interface PageProps {
         name: string;
         slug: string;
         status: string;
+        logo?: string | null;
+        logo_url?: string | null;
     } | null;
+    branding?: BrandingProps;
     school: School | null;
     flash: {
         success?: string;

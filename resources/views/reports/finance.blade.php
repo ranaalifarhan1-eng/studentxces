@@ -17,7 +17,7 @@
 </style>
 </head>
 <body>
-<h2>Finance Report — Fee Payments</h2>
+<h2>{{ $school?->name ?? 'StudentXces' }} — Finance Report — Fee Payments</h2>
 <p>Period: {{ \Carbon\Carbon::parse($from)->format('d M Y') }} to {{ \Carbon\Carbon::parse($to)->format('d M Y') }}
    &nbsp;|&nbsp; Total collected: {{ number_format($payments->sum('amount_paid'), 2) }}</p>
 <table>

@@ -45,10 +45,10 @@ class DomainService
                 'hostname'           => $hostname,
                 'type'               => SchoolDomain::TYPE_DEFAULT,
                 'is_primary'         => ! $hasPrimary,
-                'status'             => SchoolDomain::STATUS_ACTIVE,
+                'status'             => SchoolDomain::STATUS_VERIFIED,
                 'verification_token' => null,
                 'verified_at'        => now(),
-                'ssl_status'         => SchoolDomain::SSL_ACTIVE,
+                'ssl_status'         => SchoolDomain::SSL_PENDING,
             ]);
         });
     }
@@ -72,13 +72,14 @@ class DomainService
             return true;
         }
 
-        $platformBase = config('tenancy.platform_base_domain', 'edusystem.store');
-        $tenantBase   = config('tenancy.tenant_base_domain', 'edusystem.store');
+        $platformBase = strtolower(trim(config('tenancy.platform_base_domain', 'edusystem.store')));
+        $tenantBase   = strtolower(trim(config('tenancy.tenant_base_domain', 'edusystem.store')));
         $reserved     = config('tenancy.reserved_subdomains', []);
 
         // Check if domain is a direct subdomain under platform or tenant base domain
-        foreach ([$platformBase, $tenantBase] as $base) {
-            $base = strtolower(trim($base));
+        foreach (array_unique([$platformBase, $tenantBase]) as $base) {
+            if ($base === '') continue;
+
             if ($normalized === $base) {
                 return true;
             }
@@ -134,13 +135,17 @@ class DomainService
             return true;
         }
 
-        $expectedCname = strtolower(config('tenancy.cname_target', 'tenants.edusystem.store'));
+        $acceptedTargets = array_map(
+            'strtolower',
+            config('tenancy.accepted_cname_targets', [config('tenancy.cname_target', 'tenants.edusystem.store')])
+        );
 
-        // 1. Check CNAME record
+        // 1. Check CNAME record against all accepted migration targets
         $cname = $this->dnsResolver->getCnameRecord($domain->hostname);
-        if ($cname !== null && strtolower($cname) === $expectedCname) {
+        if ($cname !== null && in_array(strtolower($cname), $acceptedTargets, true)) {
             $domain->update([
-                'status'      => SchoolDomain::STATUS_ACTIVE,
+                'status'      => SchoolDomain::STATUS_VERIFIED,
+                'ssl_status'  => SchoolDomain::SSL_PENDING,
                 'verified_at' => now(),
             ]);
             return true;
@@ -152,7 +157,8 @@ class DomainService
             $txtRecords = $this->dnsResolver->getTxtRecords($challengeHost);
             if (in_array($domain->verification_token, $txtRecords, true)) {
                 $domain->update([
-                    'status'      => SchoolDomain::STATUS_ACTIVE,
+                    'status'      => SchoolDomain::STATUS_VERIFIED,
+                    'ssl_status'  => SchoolDomain::SSL_PENDING,
                     'verified_at' => now(),
                 ]);
                 return true;
@@ -173,6 +179,11 @@ class DomainService
         }
 
         DB::transaction(function () use ($domain) {
+            // Acquire row locks to prevent concurrent race conditions
+            SchoolDomain::where('school_id', $domain->school_id)
+                ->lockForUpdate()
+                ->get();
+
             SchoolDomain::where('school_id', $domain->school_id)
                 ->update(['is_primary' => false]);
 
@@ -181,18 +192,24 @@ class DomainService
     }
 
     /**
-     * Delete a domain with safe primary fallback.
+     * Delete a domain with safe primary fallback and concurrency locks.
      */
     public function deleteDomain(SchoolDomain $domain): void
     {
         DB::transaction(function () use ($domain) {
-            $totalCount = SchoolDomain::where('school_id', $domain->school_id)->count();
+            $schoolId = $domain->school_id;
+
+            // Acquire row locks for all domains of this school
+            SchoolDomain::where('school_id', $schoolId)
+                ->lockForUpdate()
+                ->get();
+
+            $totalCount = SchoolDomain::where('school_id', $schoolId)->count();
             if ($domain->isDefault() && $totalCount === 1) {
                 throw new InvalidArgumentException('Cannot delete the only default platform domain.');
             }
 
             $wasPrimary = $domain->is_primary;
-            $schoolId   = $domain->school_id;
 
             $domain->delete();
 

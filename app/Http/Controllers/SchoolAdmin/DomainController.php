@@ -21,10 +21,6 @@ class DomainController extends Controller
     public function index(): Response
     {
         $sid = $this->getSchoolId();
-        $school = School::findOrFail($sid);
-
-        // Ensure default domain exists
-        $this->domainService->generateDefaultDomain($school);
 
         $domains = SchoolDomain::where('school_id', $sid)
             ->orderByDesc('is_primary')

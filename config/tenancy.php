@@ -37,6 +37,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Accepted CNAME Targets (Migration Support)
+    |--------------------------------------------------------------------------
+    |
+    | List of acceptable CNAME targets during domain verification. Enables seamless
+    | migration from tenants.edusystem.store to tenants.studentxces.com without breaking
+    | existing customer DNS records.
+    |
+    */
+    'accepted_cname_targets' => [
+        'tenants.edusystem.store',
+        'tenants.studentxces.com',
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Platform Admin Host
     |--------------------------------------------------------------------------
     |

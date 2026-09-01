@@ -32,17 +32,25 @@ class TenantDomainResolver
             return null;
         }
 
-        // Lookup verified/active tenant domain
-        $domain = SchoolDomain::with('school')
-            ->where('hostname', $cleanHost)
-            ->whereIn('status', [SchoolDomain::STATUS_ACTIVE, SchoolDomain::STATUS_VERIFIED])
-            ->first();
+        $allowVerified = (bool) config('tenancy.allow_verified_domains', false);
+
+        // Lookup resolvable tenant domain
+        $query = SchoolDomain::with('school')->where('hostname', $cleanHost);
+
+        if ($allowVerified) {
+            $query->whereIn('status', [SchoolDomain::STATUS_ACTIVE, SchoolDomain::STATUS_VERIFIED]);
+        } else {
+            $query->where('status', SchoolDomain::STATUS_ACTIVE)
+                  ->where('ssl_status', SchoolDomain::SSL_ACTIVE);
+        }
+
+        $domain = $query->first();
 
         if ($domain && $domain->school && $domain->school->status === 'active') {
             return $domain->school;
         }
 
-        // Fail closed for unknown, disabled, or unverified hosts
+        // Fail closed for unknown, disabled, unverified, or ssl-pending hosts in production
         return null;
     }
 

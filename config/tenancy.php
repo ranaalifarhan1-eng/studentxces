@@ -37,18 +37,27 @@ return [
 
     /*
     |--------------------------------------------------------------------------
-    | Accepted CNAME Targets (Migration Support)
+    | Accepted Legacy CNAME Targets (Migration Support)
     |--------------------------------------------------------------------------
     |
-    | List of acceptable CNAME targets during domain verification. Enables seamless
-    | migration from tenants.edusystem.store to tenants.studentxces.com without breaking
-    | existing customer DNS records.
+    | Explicitly configured legacy CNAME targets accepted during domain verification.
+    | Defaults to empty. During a base domain migration, previous targets can be listed here.
+    | E.g. TENANT_LEGACY_CNAME_TARGETS=tenants.edusystem.store
     |
     */
-    'accepted_cname_targets' => [
-        'tenants.edusystem.store',
-        'tenants.studentxces.com',
-    ],
+    'legacy_cname_targets' => array_filter(array_map('trim', explode(',', env('TENANT_LEGACY_CNAME_TARGETS', '')))),
+
+    /*
+    |--------------------------------------------------------------------------
+    | Allow Verified Domains in Non-Production (Testing/Local Override)
+    |--------------------------------------------------------------------------
+    |
+    | When false (default for production), only domains with status=active AND
+    | ssl_status=active are resolvable. When true (testing/local only),
+    | domains with status=verified are also resolvable.
+    |
+    */
+    'allow_verified_domains' => env('TENANCY_ALLOW_VERIFIED_DOMAINS', false),
 
     /*
     |--------------------------------------------------------------------------

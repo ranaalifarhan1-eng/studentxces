@@ -127,6 +127,21 @@ class DomainService
     }
 
     /**
+     * Get all currently trusted CNAME targets (current target + explicitly configured legacy targets).
+     *
+     * @return array<string>
+     */
+    public function getAcceptedCnameTargets(): array
+    {
+        $currentTarget = config('tenancy.cname_target', 'tenants.edusystem.store');
+        $legacyTargets = config('tenancy.legacy_cname_targets', []);
+
+        $targets = array_merge([$currentTarget], is_array($legacyTargets) ? $legacyTargets : []);
+
+        return array_values(array_unique(array_filter(array_map('strtolower', array_map('trim', $targets)))));
+    }
+
+    /**
      * Attempt DNS verification for a domain using the injected DNS resolver.
      */
     public function verifyDomain(SchoolDomain $domain): bool
@@ -135,12 +150,9 @@ class DomainService
             return true;
         }
 
-        $acceptedTargets = array_map(
-            'strtolower',
-            config('tenancy.accepted_cname_targets', [config('tenancy.cname_target', 'tenants.edusystem.store')])
-        );
+        $acceptedTargets = $this->getAcceptedCnameTargets();
 
-        // 1. Check CNAME record against all accepted migration targets
+        // 1. Check CNAME record against all explicitly configured accepted targets
         $cname = $this->dnsResolver->getCnameRecord($domain->hostname);
         if ($cname !== null && in_array(strtolower($cname), $acceptedTargets, true)) {
             $domain->update([
@@ -174,7 +186,7 @@ class DomainService
      */
     public function setPrimary(SchoolDomain $domain): void
     {
-        if (! $domain->isResolvable()) {
+        if (! in_array($domain->status, [SchoolDomain::STATUS_ACTIVE, SchoolDomain::STATUS_VERIFIED], true)) {
             throw new InvalidArgumentException('Cannot make an unverified or inactive domain primary.');
         }
 

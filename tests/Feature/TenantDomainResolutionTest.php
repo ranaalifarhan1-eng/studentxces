@@ -34,7 +34,8 @@ class TenantDomainResolutionTest extends TestCase
         Config::set('tenancy.platform_base_domain', 'edusystem.store');
         Config::set('tenancy.tenant_base_domain', 'edusystem.store');
         Config::set('tenancy.cname_target', 'tenants.edusystem.store');
-        Config::set('tenancy.accepted_cname_targets', ['tenants.edusystem.store', 'tenants.studentxces.com']);
+        Config::set('tenancy.legacy_cname_targets', []);
+        Config::set('tenancy.allow_verified_domains', false);
         Config::set('tenancy.platform_admin_host', 'admin.edusystem.store');
         Config::set('tenancy.reserved_subdomains', ['www', 'admin', 'api', 'app', 'tenants', 'mail', 'support']);
         Config::set('tenancy.development_hosts', ['localhost', '127.0.0.1', '::1']);
@@ -227,34 +228,152 @@ class TenantDomainResolutionTest extends TestCase
         $this->assertTrue($defaultDomain->is_primary);
     }
 
-    public function test_dns_verification_succeeds_with_current_and_legacy_cname_targets(): void
+    public function test_verified_and_ssl_pending_domain_does_not_resolve_in_production_mode(): void
     {
-        // 1. Current target: tenants.edusystem.store
-        $mockResolver1 = new class implements DnsResolverInterface {
+        Config::set('tenancy.allow_verified_domains', false);
+
+        $domain = $this->domainService->addCustomDomain($this->schoolA, 'app.lahorecambridge.com');
+        $domain->update([
+            'status'      => SchoolDomain::STATUS_VERIFIED,
+            'ssl_status'  => SchoolDomain::SSL_PENDING,
+            'verified_at' => now(),
+        ]);
+
+        $resolver = app(TenantDomainResolver::class);
+        $resolvedSchool = $resolver->resolveFromHost('app.lahorecambridge.com');
+
+        $this->assertNull($resolvedSchool);
+    }
+
+    public function test_active_and_ssl_active_domain_resolves_in_production_mode(): void
+    {
+        Config::set('tenancy.allow_verified_domains', false);
+
+        $domain = $this->domainService->addCustomDomain($this->schoolA, 'app.lahorecambridge.com');
+        $domain->update([
+            'status'      => SchoolDomain::STATUS_ACTIVE,
+            'ssl_status'  => SchoolDomain::SSL_ACTIVE,
+            'verified_at' => now(),
+        ]);
+
+        $resolver = app(TenantDomainResolver::class);
+        $resolvedSchool = $resolver->resolveFromHost('app.lahorecambridge.com');
+
+        $this->assertNotNull($resolvedSchool);
+        $this->assertEquals($this->schoolA->id, $resolvedSchool->id);
+    }
+
+    public function test_active_and_ssl_pending_domain_does_not_resolve_in_production_mode(): void
+    {
+        Config::set('tenancy.allow_verified_domains', false);
+
+        $domain = $this->domainService->addCustomDomain($this->schoolA, 'app.lahorecambridge.com');
+        $domain->update([
+            'status'      => SchoolDomain::STATUS_ACTIVE,
+            'ssl_status'  => SchoolDomain::SSL_PENDING,
+            'verified_at' => now(),
+        ]);
+
+        $resolver = app(TenantDomainResolver::class);
+        $resolvedSchool = $resolver->resolveFromHost('app.lahorecambridge.com');
+
+        $this->assertNull($resolvedSchool);
+    }
+
+    public function test_allow_verified_domains_override_enables_resolution(): void
+    {
+        Config::set('tenancy.allow_verified_domains', true);
+
+        $domain = $this->domainService->addCustomDomain($this->schoolA, 'app.lahorecambridge.com');
+        $domain->update([
+            'status'      => SchoolDomain::STATUS_VERIFIED,
+            'ssl_status'  => SchoolDomain::SSL_PENDING,
+            'verified_at' => now(),
+        ]);
+
+        $resolver = app(TenantDomainResolver::class);
+        $resolvedSchool = $resolver->resolveFromHost('app.lahorecambridge.com');
+
+        $this->assertNotNull($resolvedSchool);
+        $this->assertEquals($this->schoolA->id, $resolvedSchool->id);
+    }
+
+    public function test_tenants_edusystem_store_current_cname_verifies(): void
+    {
+        $mockResolver = new class implements DnsResolverInterface {
             public function getCnameRecord(string $hostname): ?string { return 'tenants.edusystem.store'; }
             public function getTxtRecords(string $hostname): array { return []; }
         };
 
-        $service1 = new DomainService($mockResolver1);
-        $domain1 = $service1->addCustomDomain($this->schoolA, 'app.lahorecambridge.com');
+        $service = new DomainService($mockResolver);
+        $domain = $service->addCustomDomain($this->schoolA, 'app.lahorecambridge.com');
 
-        $this->assertTrue($service1->verifyDomain($domain1));
-        $this->assertEquals(SchoolDomain::STATUS_VERIFIED, $domain1->fresh()->status);
-        $this->assertEquals(SchoolDomain::SSL_PENDING, $domain1->fresh()->ssl_status);
-        $this->assertNotNull($domain1->fresh()->verified_at);
+        $this->assertTrue($service->verifyDomain($domain));
+        $this->assertEquals(SchoolDomain::STATUS_VERIFIED, $domain->fresh()->status);
+        $this->assertEquals(SchoolDomain::SSL_PENDING, $domain->fresh()->ssl_status);
+        $this->assertNotNull($domain->fresh()->verified_at);
+    }
 
-        // 2. Future migration target: tenants.studentxces.com
-        $mockResolver2 = new class implements DnsResolverInterface {
+    public function test_unconfigured_future_studentxces_cname_does_not_verify(): void
+    {
+        // legacy_cname_targets is empty -> unconfigured future target must fail
+        Config::set('tenancy.cname_target', 'tenants.edusystem.store');
+        Config::set('tenancy.legacy_cname_targets', []);
+
+        $mockResolver = new class implements DnsResolverInterface {
             public function getCnameRecord(string $hostname): ?string { return 'tenants.studentxces.com'; }
             public function getTxtRecords(string $hostname): array { return []; }
         };
 
-        $service2 = new DomainService($mockResolver2);
-        $domain2 = $service2->addCustomDomain($this->schoolB, 'portal.greenfield.com');
+        $service = new DomainService($mockResolver);
+        $domain = $service->addCustomDomain($this->schoolA, 'app.lahorecambridge.com');
 
-        $this->assertTrue($service2->verifyDomain($domain2));
-        $this->assertEquals(SchoolDomain::STATUS_VERIFIED, $domain2->fresh()->status);
-        $this->assertEquals(SchoolDomain::SSL_PENDING, $domain2->fresh()->ssl_status);
+        $this->assertFalse($service->verifyDomain($domain));
+        $this->assertEquals(SchoolDomain::STATUS_FAILED, $domain->fresh()->status);
+    }
+
+    public function test_configured_legacy_cname_target_verifies_when_explicitly_added(): void
+    {
+        Config::set('tenancy.cname_target', 'tenants.edusystem.store');
+        Config::set('tenancy.legacy_cname_targets', ['tenants.legacy-host.com']);
+
+        $mockResolver = new class implements DnsResolverInterface {
+            public function getCnameRecord(string $hostname): ?string { return 'tenants.legacy-host.com'; }
+            public function getTxtRecords(string $hostname): array { return []; }
+        };
+
+        $service = new DomainService($mockResolver);
+        $domain = $service->addCustomDomain($this->schoolA, 'app.lahorecambridge.com');
+
+        $this->assertTrue($service->verifyDomain($domain));
+        $this->assertEquals(SchoolDomain::STATUS_VERIFIED, $domain->fresh()->status);
+    }
+
+    public function test_changing_current_cname_preserves_configured_legacy_compatibility(): void
+    {
+        // Future migration configuration:
+        Config::set('tenancy.cname_target', 'tenants.studentxces.com');
+        Config::set('tenancy.legacy_cname_targets', ['tenants.edusystem.store']);
+
+        // 1. Old customer pointing to legacy target
+        $mockResolverOld = new class implements DnsResolverInterface {
+            public function getCnameRecord(string $hostname): ?string { return 'tenants.edusystem.store'; }
+            public function getTxtRecords(string $hostname): array { return []; }
+        };
+        $serviceOld = new DomainService($mockResolverOld);
+        $domainOld = $serviceOld->addCustomDomain($this->schoolA, 'old-customer.com');
+        $this->assertTrue($serviceOld->verifyDomain($domainOld));
+        $this->assertEquals(SchoolDomain::STATUS_VERIFIED, $domainOld->fresh()->status);
+
+        // 2. New customer pointing to new target
+        $mockResolverNew = new class implements DnsResolverInterface {
+            public function getCnameRecord(string $hostname): ?string { return 'tenants.studentxces.com'; }
+            public function getTxtRecords(string $hostname): array { return []; }
+        };
+        $serviceNew = new DomainService($mockResolverNew);
+        $domainNew = $serviceNew->addCustomDomain($this->schoolB, 'new-customer.com');
+        $this->assertTrue($serviceNew->verifyDomain($domainNew));
+        $this->assertEquals(SchoolDomain::STATUS_VERIFIED, $domainNew->fresh()->status);
     }
 
     public function test_dns_verification_succeeds_with_valid_txt_challenge_evidence(): void
@@ -294,19 +413,6 @@ class TenantDomainResolutionTest extends TestCase
         $this->assertNull($domain->fresh()->verified_at);
     }
 
-    public function test_host_resolves_exact_tenant_school(): void
-    {
-        $domain = $this->domainService->addCustomDomain($this->schoolA, 'app.lahorecambridge.com');
-        $domain->update(['status' => SchoolDomain::STATUS_ACTIVE, 'verified_at' => now()]);
-
-        $resolver = app(TenantDomainResolver::class);
-        $resolvedSchool = $resolver->resolveFromHost('app.lahorecambridge.com');
-
-        $this->assertNotNull($resolvedSchool);
-        $this->assertEquals($this->schoolA->id, $resolvedSchool->id);
-        $this->assertEquals('Lahore Cambridge School', $resolvedSchool->name);
-    }
-
     public function test_unknown_host_fails_closed(): void
     {
         $resolver = app(TenantDomainResolver::class);
@@ -337,28 +443,47 @@ class TenantDomainResolutionTest extends TestCase
         $this->assertNull($resolvedSchool);
     }
 
-    public function test_tenant_branded_login_resolves_from_host(): void
+    public function test_tenant_branded_login_resolves_only_for_active_ssl_active_domain(): void
     {
-        $domain = $this->domainService->addCustomDomain($this->schoolA, 'app.lahorecambridge.com');
-        $domain->update(['status' => SchoolDomain::STATUS_ACTIVE, 'verified_at' => now()]);
+        // 1. Verified + SSL Pending in production -> does NOT brand login as tenant
+        $domainPending = $this->domainService->addCustomDomain($this->schoolA, 'pending-ssl.lahorecambridge.com');
+        $domainPending->update([
+            'status'     => SchoolDomain::STATUS_VERIFIED,
+            'ssl_status' => SchoolDomain::SSL_PENDING,
+        ]);
 
-        $response = $this->get('http://app.lahorecambridge.com/login');
+        $resPending = $this->get('http://pending-ssl.lahorecambridge.com/login');
+        $resPending->assertStatus(200);
+        $propsPending = $resPending->viewData('page')['props'];
+        $this->assertEquals('StudentXces', $propsPending['branding']['platform_name']);
+        $this->assertNull($propsPending['branding']['tenant_name']);
+        $this->assertFalse($propsPending['branding']['is_tenant_context']);
 
-        $response->assertStatus(200);
+        // 2. Active + SSL Active -> DOES brand login as tenant
+        $domainActive = $this->domainService->addCustomDomain($this->schoolA, 'app.lahorecambridge.com');
+        $domainActive->update([
+            'status'      => SchoolDomain::STATUS_ACTIVE,
+            'ssl_status'  => SchoolDomain::SSL_ACTIVE,
+            'verified_at' => now(),
+        ]);
 
-        $props = $response->viewData('page')['props'];
-
-        $this->assertEquals('Lahore Cambridge School', $props['branding']['app_name']);
-        $this->assertEquals('Lahore Cambridge School', $props['branding']['tenant_name']);
-        $this->assertTrue($props['branding']['is_tenant_context']);
-        $this->assertEquals($this->schoolA->id, $props['branding']['active_school_id']);
-        $this->assertEquals('Lahore Cambridge School', $props['active_school']['name']);
+        $resActive = $this->get('http://app.lahorecambridge.com/login');
+        $resActive->assertStatus(200);
+        $propsActive = $resActive->viewData('page')['props'];
+        $this->assertEquals('Lahore Cambridge School', $propsActive['branding']['app_name']);
+        $this->assertEquals('Lahore Cambridge School', $propsActive['branding']['tenant_name']);
+        $this->assertTrue($propsActive['branding']['is_tenant_context']);
+        $this->assertEquals($this->schoolA->id, $propsActive['branding']['active_school_id']);
     }
 
-    public function test_school_a_user_can_login_on_school_a_host(): void
+    public function test_school_a_user_can_login_on_school_a_active_host(): void
     {
         $domain = $this->domainService->addCustomDomain($this->schoolA, 'app.lahorecambridge.com');
-        $domain->update(['status' => SchoolDomain::STATUS_ACTIVE, 'verified_at' => now()]);
+        $domain->update([
+            'status'      => SchoolDomain::STATUS_ACTIVE,
+            'ssl_status'  => SchoolDomain::SSL_ACTIVE,
+            'verified_at' => now(),
+        ]);
 
         $response = $this->post('http://app.lahorecambridge.com/login', [
             'email'    => 'admin@lahorecambridge.com',
@@ -369,10 +494,14 @@ class TenantDomainResolutionTest extends TestCase
         $this->assertAuthenticatedAs($this->schoolAAdmin);
     }
 
-    public function test_school_b_user_login_on_school_a_host_is_rejected(): void
+    public function test_school_b_user_login_on_school_a_active_host_is_rejected(): void
     {
         $domain = $this->domainService->addCustomDomain($this->schoolA, 'app.lahorecambridge.com');
-        $domain->update(['status' => SchoolDomain::STATUS_ACTIVE, 'verified_at' => now()]);
+        $domain->update([
+            'status'      => SchoolDomain::STATUS_ACTIVE,
+            'ssl_status'  => SchoolDomain::SSL_ACTIVE,
+            'verified_at' => now(),
+        ]);
 
         $response = $this->post('http://app.lahorecambridge.com/login', [
             'email'    => 'admin@greenfield.test',
@@ -386,7 +515,11 @@ class TenantDomainResolutionTest extends TestCase
     public function test_authenticated_school_b_user_cannot_access_school_a_host_routes(): void
     {
         $domain = $this->domainService->addCustomDomain($this->schoolA, 'app.lahorecambridge.com');
-        $domain->update(['status' => SchoolDomain::STATUS_ACTIVE, 'verified_at' => now()]);
+        $domain->update([
+            'status'      => SchoolDomain::STATUS_ACTIVE,
+            'ssl_status'  => SchoolDomain::SSL_ACTIVE,
+            'verified_at' => now(),
+        ]);
 
         // Authenticated user belonging to School B attempts to request School A's host
         $response = $this->actingAs($this->schoolBAdmin)
@@ -398,7 +531,11 @@ class TenantDomainResolutionTest extends TestCase
     public function test_super_admin_login_on_tenant_custom_host_is_rejected(): void
     {
         $domain = $this->domainService->addCustomDomain($this->schoolA, 'app.lahorecambridge.com');
-        $domain->update(['status' => SchoolDomain::STATUS_ACTIVE, 'verified_at' => now()]);
+        $domain->update([
+            'status'      => SchoolDomain::STATUS_ACTIVE,
+            'ssl_status'  => SchoolDomain::SSL_ACTIVE,
+            'verified_at' => now(),
+        ]);
 
         $response = $this->post('http://app.lahorecambridge.com/login', [
             'email'    => 'superadmin@test.com',

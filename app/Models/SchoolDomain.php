@@ -61,6 +61,10 @@ class SchoolDomain extends Model
 
     public function isResolvable(): bool
     {
-        return in_array($this->status, [self::STATUS_ACTIVE, self::STATUS_VERIFIED], true);
+        if (config('tenancy.allow_verified_domains', false)) {
+            return in_array($this->status, [self::STATUS_ACTIVE, self::STATUS_VERIFIED], true);
+        }
+
+        return $this->status === self::STATUS_ACTIVE && $this->ssl_status === self::SSL_ACTIVE;
     }
 }

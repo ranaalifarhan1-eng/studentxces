@@ -27,6 +27,14 @@ return new class extends Migration
                 ->on('package_prices')
                 ->nullOnDelete();
         });
+
+        // Explicit data backfill for existing Legacy All Access package
+        \Illuminate\Support\Facades\DB::table('packages')
+            ->where('slug', 'legacy-all-access')
+            ->update([
+                'is_internal' => true,
+                'is_active'   => false,
+            ]);
     }
 
     public function down(): void

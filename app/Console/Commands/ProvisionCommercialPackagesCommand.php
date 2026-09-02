@@ -9,15 +9,13 @@ class ProvisionCommercialPackagesCommand extends Command
 {
     protected $signature = 'packages:provision-commercial 
                             {--dry-run : Simulate package provisioning without writing changes}
-                            {--execute : Execute transactional provisioning of commercial packages}
-                            {--force : Permit updating packages that already have subscriptions}';
+                            {--execute : Execute transactional provisioning of commercial packages}';
 
     protected $description = 'Provision canonical StudentXces commercial packages (Starter, Standard, Pro) with multi-term pricing';
 
     public function handle(CommercialPackageProvisioner $provisioner): int
     {
         $isExecute = (bool) $this->option('execute');
-        $isForce   = (bool) $this->option('force');
 
         if (! $isExecute) {
             $this->warn('Running in DRY-RUN simulation mode (zero database writes). Pass --execute to write changes.');
@@ -54,7 +52,7 @@ class ProvisionCommercialPackagesCommand extends Command
         $this->info('Executing transactional commercial package provisioning...');
 
         try {
-            $packages = $provisioner->provisionAll($isForce);
+            $packages = $provisioner->provisionAll();
         } catch (\RuntimeException $e) {
             $this->error($e->getMessage());
             return self::FAILURE;

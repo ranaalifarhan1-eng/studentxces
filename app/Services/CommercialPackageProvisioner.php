@@ -107,21 +107,21 @@ class CommercialPackageProvisioner
 
     /**
      * Provision all 3 canonical commercial packages with their multi-term pricing and modules.
+     * Strictly blocks overwrite if any package has subscriptions.
      *
-     * @param bool $forceSafeUpdate If true, permits updating configuration even if subscriptions exist without altering subscription snapshot integrity
      * @return array<string, Package>
      */
-    public function provisionAll(bool $forceSafeUpdate = false): array
+    public function provisionAll(): array
     {
-        return DB::transaction(function () use ($forceSafeUpdate) {
+        return DB::transaction(function () {
             $created = [];
 
             foreach (self::PACKAGES as $key => $config) {
                 $package = Package::withTrashed()->where('slug', $config['slug'])->first();
 
-                if ($package && $package->subscriptions()->exists() && ! $forceSafeUpdate) {
+                if ($package && $package->subscriptions()->withTrashed()->exists()) {
                     throw new \RuntimeException(
-                        "Safety check failed: Package '{$package->name}' (slug: {$package->slug}) has live subscriptions. Overwriting modules or prices automatically is blocked. Pass explicit force flag if intended."
+                        "Safety check failed: Package '{$package->name}' (slug: {$package->slug}) has active or historic subscriptions. Overwriting modules, pricing terms, or package definitions is strictly blocked."
                     );
                 }
 

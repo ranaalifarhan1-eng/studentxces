@@ -421,4 +421,66 @@ class CommercialPackageBillingTest extends TestCase
 
         $this->assertEquals(0, Package::whereIn('slug', ['starter', 'standard', 'pro'])->count());
     }
+
+    public function test_migration_backfills_pre_existing_legacy_all_access_package(): void
+    {
+        // Simulate pre-existing legacy package before migration backfill
+        $legacy = Package::create([
+            'name'          => 'Legacy All Access',
+            'slug'          => 'legacy-all-access',
+            'description'   => 'Existing tier',
+            'price_monthly' => 0.00,
+            'price_yearly'  => 0.00,
+            'max_students'  => 0,
+            'max_staff'     => 0,
+            'storage_gb'    => 100,
+            'is_active'     => true,
+            'is_internal'   => false,
+        ]);
+
+        $originalId = $legacy->id;
+
+        // Run the backfill update as executed in migration 2026_09_02_224001
+        \Illuminate\Support\Facades\DB::table('packages')
+            ->where('slug', 'legacy-all-access')
+            ->update([
+                'is_internal' => true,
+                'is_active'   => false,
+            ]);
+
+        $fresh = $legacy->fresh();
+        $this->assertEquals($originalId, $fresh->id);
+        $this->assertTrue($fresh->is_internal);
+        $this->assertFalse($fresh->is_active);
+    }
+
+    public function test_provision_command_strictly_blocks_overwriting_subscribed_commercial_package_with_no_bypass(): void
+    {
+        // 1. Initial provision succeeds
+        $this->artisan('packages:provision-commercial --execute')->assertSuccessful();
+
+        $starter = Package::where('slug', 'starter')->first();
+        $school = School::create(['name' => 'KGS Clifton', 'code' => 'KGS002', 'is_active' => true]);
+
+        // 2. Attach a subscription to Starter
+        SchoolSubscription::create([
+            'school_id'           => $school->id,
+            'package_id'          => $starter->id,
+            'billing_term_months' => 3,
+            'start_date'          => '2026-10-01',
+            'end_date'            => '2027-01-01',
+            'status'              => 'active',
+            'amount_paid'         => 9000.00,
+        ]);
+
+        // 3. Attempting to rerun provision must strictly fail and refuse overwrite
+        $this->artisan('packages:provision-commercial --execute')
+            ->expectsOutputToContain("Package 'Starter' (slug: starter) has active or historic subscriptions")
+            ->assertFailed();
+
+        // 4. Verify Starter modules and prices were not destroyed or altered
+        $freshStarter = $starter->fresh(['modules', 'prices']);
+        $this->assertCount(9, $freshStarter->modules);
+        $this->assertCount(3, $freshStarter->prices);
+    }
 }

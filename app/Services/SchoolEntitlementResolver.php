@@ -12,6 +12,29 @@ use Carbon\Carbon;
 class SchoolEntitlementResolver
 {
     /**
+     * Request-scoped memoization cache for subscription candidates.
+     *
+     * @var array<int, \Illuminate\Database\Eloquent\Collection>
+     */
+    protected array $memoizedCandidates = [];
+
+    /**
+     * Request-scoped memoization cache for effective modules.
+     *
+     * @var array<int, array<string, bool>>
+     */
+    protected array $memoizedEffectiveModules = [];
+
+    /**
+     * Clear request-scoped cache (useful for testing).
+     */
+    public function clearCache(): void
+    {
+        $this->memoizedCandidates = [];
+        $this->memoizedEffectiveModules = [];
+    }
+
+    /**
      * Resolve the single active/valid subscription for a school.
      * Returns null if no valid subscription exists or if multiple ambiguous valid subscriptions exist.
      */
@@ -282,6 +305,11 @@ class SchoolEntitlementResolver
      */
     public function getEffectiveModules(int|string|School $school): array
     {
+        $schoolId = $this->resolveSchoolId($school);
+        if ($schoolId && isset($this->memoizedEffectiveModules[$schoolId])) {
+            return $this->memoizedEffectiveModules[$schoolId];
+        }
+
         $canonical = config('modules.canonical', [
             'students', 'staff', 'attendance', 'timetable', 'exams',
             'fees', 'library', 'transport', 'hostel', 'inventory',
@@ -289,21 +317,24 @@ class SchoolEntitlementResolver
         ]);
 
         $subResult = $this->checkSubscription($school);
-        $schoolId  = $subResult->schoolId;
+        $resolvedSchoolId  = $subResult->schoolId;
 
         $effective = [];
 
         // If no valid subscription, all paid modules are false
-        if (! $subResult->isEntitled || ! $schoolId) {
+        if (! $subResult->isEntitled || ! $resolvedSchoolId) {
             foreach ($canonical as $slug) {
                 $effective[$slug] = false;
+            }
+            if ($schoolId) {
+                $this->memoizedEffectiveModules[$schoolId] = $effective;
             }
             return $effective;
         }
 
         $subscription   = $this->resolveSubscription($school);
         $packageModules = $subscription?->package?->modules->pluck('module_slug')->toArray() ?? [];
-        $overrides      = SchoolModule::where('school_id', $schoolId)->pluck('is_enabled', 'module_slug')->toArray();
+        $overrides      = SchoolModule::where('school_id', $resolvedSchoolId)->pluck('is_enabled', 'module_slug')->toArray();
 
         foreach ($canonical as $slug) {
             if (isset($overrides[$slug])) {
@@ -311,6 +342,10 @@ class SchoolEntitlementResolver
             } else {
                 $effective[$slug] = in_array($slug, $packageModules, true);
             }
+        }
+
+        if ($schoolId) {
+            $this->memoizedEffectiveModules[$schoolId] = $effective;
         }
 
         return $effective;
@@ -322,9 +357,13 @@ class SchoolEntitlementResolver
      */
     protected function getValidSubscriptionCandidates(int $schoolId)
     {
+        if (isset($this->memoizedCandidates[$schoolId])) {
+            return $this->memoizedCandidates[$schoolId];
+        }
+
         $today = Carbon::today()->toDateString();
 
-        return SchoolSubscription::with('package.modules')
+        return $this->memoizedCandidates[$schoolId] = SchoolSubscription::with('package.modules')
             ->where('school_id', $schoolId)
             ->where(function ($q) use ($today) {
                 // Paid active window

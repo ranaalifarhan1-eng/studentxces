@@ -47,10 +47,13 @@ class ReportController extends Controller
         $totalStudents = Student::withoutGlobalScopes()->where('school_id', $sid)->count();
         $totalStaff    = Staff::where('school_id', $sid)->where('status', 'active')->count();
 
-        $todayAtt = Attendance::where('school_id', $sid)->whereDate('date', today())->get();
-        $attendancePct = $todayAtt->count()
-            ? round($todayAtt->where('status', 'present')->count() / $todayAtt->count() * 100, 1)
-            : 0;
+        $todayAttStats = Attendance::where('school_id', $sid)
+            ->whereDate('date', today())
+            ->selectRaw("COUNT(*) as total, SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) as present_count")
+            ->first();
+        $totalToday    = (int) ($todayAttStats?->total ?? 0);
+        $presentToday  = (int) ($todayAttStats?->present_count ?? 0);
+        $attendancePct = $totalToday > 0 ? round(($presentToday / $totalToday) * 100, 1) : 0;
 
         $monthFees = FeePayment::where('school_id', $sid)
             ->whereMonth('payment_date', now()->month)
@@ -61,28 +64,44 @@ class ReportController extends Controller
             ->where('status', 'pending')
             ->sum(DB::raw('amount_due - amount_paid'));
 
-        // Monthly fee collection for last 6 months
+        // Monthly fee collection for last 6 months (single aggregated query)
+        $sixMonthsAgo = now()->subMonths(5)->startOfMonth();
+        $monthlyFees = FeePayment::where('school_id', $sid)
+            ->where('payment_date', '>=', $sixMonthsAgo)
+            ->selectRaw("DATE_FORMAT(payment_date, '%Y-%m') as ym, SUM(amount_paid) as total_amount")
+            ->groupBy('ym')
+            ->pluck('total_amount', 'ym');
+
         $feeChart = [];
         for ($i = 5; $i >= 0; $i--) {
             $month = now()->subMonths($i);
+            $ym = $month->format('Y-m');
             $feeChart[] = [
                 'month'  => $month->format('M'),
-                'amount' => (float) FeePayment::where('school_id', $sid)
-                    ->whereMonth('payment_date', $month->month)
-                    ->whereYear('payment_date', $month->year)
-                    ->sum('amount_paid'),
+                'amount' => (float) ($monthlyFees->get($ym) ?? 0),
             ];
         }
 
-        // Attendance trend last 7 days
+        // Attendance trend last 7 days (single aggregated query)
+        $sevenDaysAgo = now()->subDays(6)->startOfDay();
+        $dailyAttendance = Attendance::where('school_id', $sid)
+            ->where('date', '>=', $sevenDaysAgo)
+            ->selectRaw("DATE_FORMAT(date, '%Y-%m-%d') as att_date,
+                         SUM(CASE WHEN status = 'present' THEN 1 ELSE 0 END) as present_count,
+                         SUM(CASE WHEN status = 'absent' THEN 1 ELSE 0 END) as absent_count")
+            ->groupBy('att_date')
+            ->get()
+            ->keyBy('att_date');
+
         $attChart = [];
         for ($i = 6; $i >= 0; $i--) {
-            $day  = now()->subDays($i);
-            $recs = Attendance::where('school_id', $sid)->whereDate('date', $day)->get();
+            $day = now()->subDays($i);
+            $dateStr = $day->format('Y-m-d');
+            $rec = $dailyAttendance->get($dateStr);
             $attChart[] = [
                 'day'     => $day->format('D'),
-                'present' => $recs->where('status', 'present')->count(),
-                'absent'  => $recs->where('status', 'absent')->count(),
+                'present' => (int) ($rec?->present_count ?? 0),
+                'absent'  => (int) ($rec?->absent_count ?? 0),
             ];
         }
 

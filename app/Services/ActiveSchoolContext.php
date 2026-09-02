@@ -15,6 +15,21 @@ class ActiveSchoolContext
     protected bool $inTenantScope = false;
 
     /**
+     * Request-scoped memoization cache.
+     */
+    protected ?string $memoizedHost = null;
+    protected ?School $memoizedHostSchool = null;
+
+    /**
+     * Reset request-scoped memoization cache (useful for testing and context transitions).
+     */
+    public function reset(): void
+    {
+        $this->memoizedHost = null;
+        $this->memoizedHostSchool = null;
+    }
+
+    /**
      * Set explicit tenant operational scope flag.
      */
     public function setTenantOperationalScope(bool $active): void
@@ -45,8 +60,14 @@ class ActiveSchoolContext
     {
         if (function_exists('request') && request()) {
             $host = request()->getHost();
-            return app(TenantDomainResolver::class)->resolveFromHost($host);
+            $cleanHost = strtolower(trim(explode(':', $host)[0]));
+            if ($this->memoizedHost === $cleanHost) {
+                return $this->memoizedHostSchool;
+            }
+            $this->memoizedHost = $cleanHost;
+            return $this->memoizedHostSchool = app(TenantDomainResolver::class)->resolveFromHost($cleanHost);
         }
+
         return null;
     }
 
@@ -122,6 +143,11 @@ class ActiveSchoolContext
      */
     public function getActiveSchool(): ?School
     {
+        $hostSchool = $this->getHostResolvedSchool();
+        if ($hostSchool) {
+            return $hostSchool;
+        }
+
         $schoolId = $this->getActiveSchoolId();
         return $schoolId ? School::find($schoolId) : null;
     }
@@ -145,6 +171,8 @@ class ActiveSchoolContext
      */
     public function setActiveSchoolId(int $schoolId): bool
     {
+        $this->reset();
+
         $user = Auth::user();
         if (! $user || ! $user->hasRole('super-admin')) {
             throw new \Illuminate\Auth\Access\AuthorizationException('Only Super Admins can set active school context.');
@@ -172,6 +200,8 @@ class ActiveSchoolContext
      */
     public function clearActiveSchoolId(): void
     {
+        $this->reset();
+
         $user = Auth::user();
         if (! $user || ! $user->hasRole('super-admin')) {
             return;

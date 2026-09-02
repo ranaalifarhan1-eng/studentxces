@@ -39,6 +39,27 @@ class SchoolDomain extends Model
         'verified_at' => 'datetime',
     ];
 
+    protected static function booted(): void
+    {
+        static::saved(function () {
+            if (app()->bound(\App\Services\TenantDomainResolver::class)) {
+                app(\App\Services\TenantDomainResolver::class)->clearCache();
+            }
+            if (app()->bound(\App\Services\ActiveSchoolContext::class)) {
+                app(\App\Services\ActiveSchoolContext::class)->reset();
+            }
+        });
+
+        static::deleted(function () {
+            if (app()->bound(\App\Services\TenantDomainResolver::class)) {
+                app(\App\Services\TenantDomainResolver::class)->clearCache();
+            }
+            if (app()->bound(\App\Services\ActiveSchoolContext::class)) {
+                app(\App\Services\ActiveSchoolContext::class)->reset();
+            }
+        });
+    }
+
     public function school(): BelongsTo
     {
         return $this->belongsTo(School::class);

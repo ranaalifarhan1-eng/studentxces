@@ -11,6 +11,10 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
+        $this->app->singleton(\App\Services\TenantDomainResolver::class);
+        $this->app->singleton(\App\Services\ActiveSchoolContext::class);
+        $this->app->singleton(\App\Services\SchoolEntitlementResolver::class);
+
         $this->app->bind(
             \App\Services\DnsResolverInterface::class,
             \App\Services\SystemDnsResolver::class

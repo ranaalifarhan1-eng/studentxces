@@ -210,6 +210,9 @@ export default function Sidebar() {
     const role = auth.user?.role ?? '';
 
     const isSuperAdmin = role === 'super-admin';
+    const isSchoolMode = isSuperAdmin && !!active_school;
+    const effectiveRole = isSchoolMode ? 'school-admin' : role;
+
     const brandName = (isSuperAdmin && !active_school)
         ? (branding?.platform_name || 'StudentXces')
         : (branding?.tenant_name || active_school?.name || branding?.platform_name || 'StudentXces');
@@ -220,9 +223,17 @@ export default function Sidebar() {
     const filteredGroups = navGroups
         .map((group) => ({
             ...group,
-            items: group.items.filter((item) =>
-                !item.roles || item.roles.includes(role),
-            ),
+            items: group.items.filter((item) => {
+                // In school mode for Super Admin, hide all platform routes (/super-admin/*)
+                if (isSchoolMode && item.href.startsWith('/super-admin')) {
+                    return false;
+                }
+                // In platform mode for Super Admin, hide all school routes (/school/*)
+                if (isSuperAdmin && !active_school && item.href.startsWith('/school')) {
+                    return false;
+                }
+                return !item.roles || item.roles.includes(effectiveRole);
+            }),
         }))
         .filter((group) => group.items.length > 0);
 

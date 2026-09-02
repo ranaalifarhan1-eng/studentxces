@@ -198,12 +198,49 @@ class SuperAdminActiveSchoolContextTest extends TestCase
 
         $response = $this->post('/super-admin/school-context/clear');
 
-        $response->assertRedirect(route('super-admin.schools.index'));
+        $response->assertRedirect(route('super-admin.dashboard'));
         $this->assertNull(session('active_school_id'));
 
         // Subsequent /school request is blocked
         $blockedResponse = $this->get('/school/reports/dashboard');
         $blockedResponse->assertRedirect(route('super-admin.schools.index'));
+    }
+
+    public function test_super_admin_in_school_mode_accesses_school_settings_for_active_school(): void
+    {
+        $this->actingAs($this->superAdmin)->withSession(['active_school_id' => $this->schoolA->id]);
+
+        $response = $this->get('/school/settings');
+        $response->assertStatus(200);
+
+        $props = $response->viewData('page')['props'] ?? [];
+        $this->assertEquals($this->schoolA->id, $props['school']['id']);
+        $this->assertEquals('Alpha Academy', $props['school']['name']);
+    }
+
+    public function test_super_admin_in_school_mode_accesses_school_domains_for_active_school(): void
+    {
+        $this->actingAs($this->superAdmin)->withSession(['active_school_id' => $this->schoolA->id]);
+
+        $response = $this->get('/school/settings/domains');
+        $response->assertStatus(200);
+
+        $props = $response->viewData('page')['props'] ?? [];
+        $this->assertEquals('tenants.edusystem.store', $props['cname_target']);
+        $this->assertEquals('edusystem.store', $props['tenant_base_domain']);
+    }
+
+    public function test_super_admin_in_school_mode_retains_super_admin_role_identity(): void
+    {
+        $this->actingAs($this->superAdmin)->withSession(['active_school_id' => $this->schoolA->id]);
+
+        $response = $this->get('/school/reports/dashboard');
+        $response->assertStatus(200);
+
+        $props = $response->viewData('page')['props'] ?? [];
+        $this->assertEquals($this->superAdmin->id, $props['auth']['user']['id']);
+        $this->assertEquals('super-admin', $props['auth']['user']['role']);
+        $this->assertEquals($this->schoolA->id, $props['active_school']['id']);
     }
 
     public function test_super_admin_platform_routes_remain_globally_unscoped_even_with_active_session(): void

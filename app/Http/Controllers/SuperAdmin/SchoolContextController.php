@@ -29,7 +29,7 @@ class SchoolContextController extends Controller
         $context->clearActiveSchoolId();
 
         return redirect()
-            ->route('super-admin.schools.index')
+            ->route('super-admin.dashboard')
             ->with('success', 'Exited school context.');
     }
 }

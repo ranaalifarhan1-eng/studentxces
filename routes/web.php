@@ -43,6 +43,7 @@ use App\Http\Controllers\SuperAdmin\ModuleManagerController;
 use App\Http\Controllers\SuperAdmin\PackageController;
 use App\Http\Controllers\SuperAdmin\SchoolController;
 use App\Http\Controllers\SuperAdmin\SchoolContextController;
+use App\Http\Controllers\SuperAdmin\SchoolOnboardingController;
 use App\Http\Controllers\SuperAdmin\SubscriptionController;
 use App\Http\Controllers\SuperAdmin\UserManagementController;
 use Illuminate\Support\Facades\Route;
@@ -377,6 +378,10 @@ Route::middleware('auth')->group(function () {
         ->prefix('super-admin')
         ->name('super-admin.')
         ->group(function () {
+            // Guided Commercial School Onboarding
+            Route::get('schools/onboard',  [SchoolOnboardingController::class, 'create'])->name('schools.onboard');
+            Route::post('schools/onboard', [SchoolOnboardingController::class, 'store'])->name('schools.onboard.store');
+
             Route::resource('schools', SchoolController::class);
             Route::patch('schools/{school}/suspend', [SchoolController::class, 'suspend'])->name('schools.suspend');
             Route::patch('schools/{school}/activate', [SchoolController::class, 'activate'])->name('schools.activate');

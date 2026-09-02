@@ -63,11 +63,18 @@ export default function SchoolsIndex() {
                     <h1 className="text-xl font-bold text-slate-900 dark:text-white">Schools</h1>
                     <p className="text-sm text-slate-500 dark:text-slate-400 mt-0.5">Manage all registered schools</p>
                 </div>
-                <Button asChild className="bg-indigo-600 hover:bg-indigo-700 text-white inline-flex items-center gap-2">
-                    <Link href="/super-admin/schools/create">
-                        <Plus className="w-4 h-4" /> Add School
-                    </Link>
-                </Button>
+                <div className="flex items-center gap-2">
+                    <Button asChild className="bg-indigo-600 hover:bg-indigo-700 text-white inline-flex items-center gap-2 shadow-sm font-semibold">
+                        <Link href="/super-admin/schools/onboard">
+                            <Plus className="w-4 h-4" /> Onboard School
+                        </Link>
+                    </Button>
+                    <Button asChild variant="outline" className="inline-flex items-center gap-1.5 text-xs">
+                        <Link href="/super-admin/schools/create">
+                            Quick Add
+                        </Link>
+                    </Button>
+                </div>
             </div>
 
             {/* Stats */}

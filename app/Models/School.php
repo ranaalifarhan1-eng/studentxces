@@ -70,6 +70,11 @@ class School extends Model
         return $this->logo ? asset('storage/' . $this->logo) : null;
     }
 
+    public function getCodeAttribute(): ?string
+    {
+        return $this->settings['school_code'] ?? null;
+    }
+
     public function domains(): HasMany
     {
         return $this->hasMany(SchoolDomain::class);

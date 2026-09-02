@@ -6,7 +6,7 @@ import {
     Settings, ChevronLeft, ChevronRight, Layers, Clock, CalendarOff,
     Building2, BadgeCheck, NotebookPen, Video, Megaphone, Mail, Send, Bell,
     PieChart, FileText, TrendingUp, Wrench, ShieldCheck, Plug,
-    CreditCard, Tag, Globe,
+    CreditCard, Tag, Globe, Sparkles,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useUIStore } from '@/Stores/useUIStore';
@@ -30,11 +30,12 @@ const navGroups: NavGroup[] = [
     {
         title: 'System',
         items: [
-            { label: 'Dashboard',   href: '/school/reports/dashboard',  icon: LayoutDashboard, roles: ['school-admin','principal','teacher','accountant','librarian'] },
-            { label: 'Dashboard',   href: '/super-admin/dashboard',     icon: LayoutDashboard, roles: ['super-admin'], exact: true },
-            { label: 'My Dashboard',href: '/school/student/dashboard',  icon: LayoutDashboard, roles: ['student'] },
-            { label: 'My Dashboard',href: '/school/parent/dashboard',   icon: LayoutDashboard, roles: ['parent'] },
-            { label: 'Schools',     href: '/super-admin/schools',       icon: School,          roles: ['super-admin'] },
+            { label: 'Dashboard',      href: '/school/reports/dashboard',  icon: LayoutDashboard, roles: ['school-admin','principal','teacher','accountant','librarian'] },
+            { label: 'Dashboard',      href: '/super-admin/dashboard',     icon: LayoutDashboard, roles: ['super-admin'], exact: true },
+            { label: 'My Dashboard',   href: '/school/student/dashboard',  icon: LayoutDashboard, roles: ['student'] },
+            { label: 'My Dashboard',   href: '/school/parent/dashboard',   icon: LayoutDashboard, roles: ['parent'] },
+            { label: 'Schools',        href: '/super-admin/schools',       icon: School,          roles: ['super-admin'] },
+            { label: 'Onboard School', href: '/super-admin/schools/onboard', icon: Sparkles,     roles: ['super-admin'] },
         ],
     },
     {

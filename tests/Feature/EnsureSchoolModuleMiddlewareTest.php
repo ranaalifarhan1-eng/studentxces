@@ -30,28 +30,56 @@ class EnsureSchoolModuleMiddlewareTest extends TestCase
         Role::firstOrCreate(['name' => 'parent', 'guard_name' => 'web']);
     }
 
-    protected function createSchool(string $name = 'School MW', string $status = 'active'): School
+    protected function createSchoolWithSubscription(string $name = 'School MW', array $moduleSlugs = []): array
     {
-        return School::create([
-            'name' => $name,
-            'slug' => \Illuminate\Support\Str::slug($name . '-' . uniqid()),
-            'email' => strtolower(str_replace(' ', '', $name)) . uniqid() . '@example.com',
-            'status' => $status,
+        $school = School::create([
+            'name'   => $name,
+            'slug'   => \Illuminate\Support\Str::slug($name . '-' . uniqid()),
+            'email'  => strtolower(str_replace(' ', '', $name)) . uniqid() . '@example.com',
+            'status' => 'active',
         ]);
-    }
 
-    public function test_off_mode_permits_module_route_even_with_no_subscription(): void
-    {
-        Config::set('entitlement.mode', 'off');
+        $package = Package::create([
+            'name'          => $name . ' Plan',
+            'slug'          => \Illuminate\Support\Str::slug($name . '-plan-' . uniqid()),
+            'price_monthly' => 20,
+            'price_yearly'  => 200,
+            'max_students'  => 100,
+            'max_staff'     => 20,
+            'storage_gb'    => 10,
+            'is_active'     => true,
+            'is_internal'   => false,
+        ]);
 
-        $school = $this->createSchool('School Off Mode');
+        foreach ($moduleSlugs as $slug) {
+            PackageModule::create(['package_id' => $package->id, 'module_slug' => $slug]);
+        }
+
+        $subscription = SchoolSubscription::create([
+            'school_id'   => $school->id,
+            'package_id'  => $package->id,
+            'start_date'  => Carbon::yesterday(),
+            'end_date'    => Carbon::tomorrow(),
+            'status'      => 'active',
+            'amount_paid' => 20,
+        ]);
+
         $user = User::factory()->create(['school_id' => $school->id]);
         $user->assignRole('school-admin');
 
-        // Library route with no subscription under OFF mode
+        return [$school, $user, $package, $subscription];
+    }
+
+    public function test_off_mode_permits_module_route_even_when_not_in_package(): void
+    {
+        Config::set('entitlement.mode', 'off');
+
+        // School has active subscription, but NO library module in package
+        [$school, $user] = $this->createSchoolWithSubscription('School Off Mode', ['students']);
+
         $response = $this->actingAs($user)->get('/school/library/books');
 
-        // Under OFF mode, entitlement does not block (HTTP 200)
+        // Under OFF mode, module entitlement does not block (HTTP 200)
         $response->assertStatus(200);
     }
 
@@ -59,9 +87,8 @@ class EnsureSchoolModuleMiddlewareTest extends TestCase
     {
         Config::set('entitlement.mode', 'observe');
 
-        $school = $this->createSchool('School Observe Mode');
-        $user = User::factory()->create(['school_id' => $school->id]);
-        $user->assignRole('school-admin');
+        // School has active subscription, but NO library module in package
+        [$school, $user] = $this->createSchoolWithSubscription('School Observe Mode', ['students']);
 
         Log::spy();
 
@@ -78,7 +105,7 @@ class EnsureSchoolModuleMiddlewareTest extends TestCase
                     && $context['school_id'] === $school->id
                     && $context['user_id'] === $user->id
                     && $context['module'] === 'library'
-                    && $context['reason_code'] === 'NO_ACTIVE_SUBSCRIPTION';
+                    && $context['reason_code'] === 'MODULE_NOT_IN_PACKAGE';
             });
     }
 
@@ -86,11 +113,9 @@ class EnsureSchoolModuleMiddlewareTest extends TestCase
     {
         Config::set('entitlement.mode', 'enforce');
 
-        $school = $this->createSchool('School Enforce Mode Deny');
-        $user = User::factory()->create(['school_id' => $school->id]);
-        $user->assignRole('school-admin');
+        // School has active subscription, but NO library module in package
+        [$school, $user] = $this->createSchoolWithSubscription('School Enforce Mode Deny', ['students']);
 
-        // No subscription under ENFORCE mode
         $response = $this->actingAs($user)->get('/school/library/books');
 
         $response->assertStatus(403);
@@ -100,30 +125,8 @@ class EnsureSchoolModuleMiddlewareTest extends TestCase
     {
         Config::set('entitlement.mode', 'enforce');
 
-        $school = $this->createSchool('School Enforce Mode Allow');
-        $user = User::factory()->create(['school_id' => $school->id]);
-        $user->assignRole('school-admin');
-
-        $package = Package::create([
-            'name' => 'Library Plan',
-            'slug' => 'library-plan',
-            'price_monthly' => 20,
-            'price_yearly' => 200,
-            'max_students' => 100,
-            'max_staff' => 20,
-            'storage_gb' => 10,
-            'is_active' => true,
-        ]);
-        PackageModule::create(['package_id' => $package->id, 'module_slug' => 'library']);
-
-        SchoolSubscription::create([
-            'school_id' => $school->id,
-            'package_id' => $package->id,
-            'start_date' => Carbon::yesterday(),
-            'end_date' => Carbon::tomorrow(),
-            'status' => 'active',
-            'amount_paid' => 20,
-        ]);
+        // School has active subscription with library module included
+        [$school, $user] = $this->createSchoolWithSubscription('School Enforce Mode Allow', ['library']);
 
         $response = $this->actingAs($user)->get('/school/library/books');
 
@@ -132,31 +135,30 @@ class EnsureSchoolModuleMiddlewareTest extends TestCase
 
     public function test_direct_post_mutation_passes_in_off_and_blocks_in_enforce(): void
     {
-        $school = $this->createSchool('School Direct Mutation');
-        $user = User::factory()->create(['school_id' => $school->id]);
-        $user->assignRole('school-admin');
-
         // 1. OFF Mode: passes through
         Config::set('entitlement.mode', 'off');
-        $responseOff = $this->actingAs($user)->post('/school/transport/vehicles', [
+        [$schoolOff, $userOff] = $this->createSchoolWithSubscription('School Mutation Off', []);
+
+        $responseOff = $this->actingAs($userOff)->post('/school/transport/vehicles', [
             'registration_no' => 'LEA-1234',
-            'type' => 'bus',
-            'capacity' => 30,
-            'driver_name' => 'John Doe',
-            'driver_phone' => '1234567890',
+            'type'            => 'bus',
+            'capacity'        => 30,
+            'driver_name'     => 'John Doe',
+            'driver_phone'    => '1234567890',
         ]);
-        // Should redirect back on successful store
         $responseOff->assertSessionHasNoErrors();
         $this->assertTrue(in_array($responseOff->status(), [200, 302]));
 
-        // 2. ENFORCE Mode: blocked when no subscription exists
+        // 2. ENFORCE Mode: blocked when transport module is not in package
         Config::set('entitlement.mode', 'enforce');
-        $responseEnforce = $this->actingAs($user)->post('/school/transport/vehicles', [
+        [$schoolEnforce, $userEnforce] = $this->createSchoolWithSubscription('School Mutation Enforce', []);
+
+        $responseEnforce = $this->actingAs($userEnforce)->post('/school/transport/vehicles', [
             'registration_no' => 'LEA-5678',
-            'type' => 'bus',
-            'capacity' => 30,
-            'driver_name' => 'Jane Doe',
-            'driver_phone' => '0987654321',
+            'type'            => 'bus',
+            'capacity'        => 30,
+            'driver_name'     => 'Jane Doe',
+            'driver_phone'    => '0987654321',
         ]);
         $responseEnforce->assertStatus(403);
     }
@@ -174,7 +176,7 @@ class EnsureSchoolModuleMiddlewareTest extends TestCase
         $superAdmin = User::factory()->create();
         $superAdmin->assignRole('super-admin');
 
-        // Super Admin accessing school library in active school context with NO active subscription
+        // Super Admin accessing school library in active school context
         $response = $this->actingAs($superAdmin)
             ->withSession(['active_school_id' => $school->id])
             ->get('/school/library/books');
@@ -186,9 +188,7 @@ class EnsureSchoolModuleMiddlewareTest extends TestCase
     {
         Config::set('entitlement.mode', 'enforce');
 
-        $school = $this->createSchool('School Core Accessible');
-        $user = User::factory()->create(['school_id' => $school->id]);
-        $user->assignRole('school-admin');
+        [$school, $user] = $this->createSchoolWithSubscription('School Core Accessible', []);
 
         // Core dashboard landing page
         $resDashboard = $this->actingAs($user)->get('/school/reports/dashboard');
@@ -207,31 +207,9 @@ class EnsureSchoolModuleMiddlewareTest extends TestCase
     {
         Config::set('entitlement.mode', 'enforce');
 
-        $school = $this->createSchool('School Role Independent');
+        [$school] = $this->createSchoolWithSubscription('School Role Independent', ['library']);
         $studentUser = User::factory()->create(['school_id' => $school->id]);
         $studentUser->assignRole('student'); // Student role cannot access admin routes
-
-        // School has all modules enabled
-        $package = Package::create([
-            'name' => 'All Access',
-            'slug' => 'all-access',
-            'price_monthly' => 100,
-            'price_yearly' => 1000,
-            'max_students' => 500,
-            'max_staff' => 50,
-            'storage_gb' => 50,
-            'is_active' => true,
-        ]);
-        PackageModule::create(['package_id' => $package->id, 'module_slug' => 'library']);
-
-        SchoolSubscription::create([
-            'school_id' => $school->id,
-            'package_id' => $package->id,
-            'start_date' => Carbon::yesterday(),
-            'end_date' => Carbon::tomorrow(),
-            'status' => 'active',
-            'amount_paid' => 100,
-        ]);
 
         // Student accessing staff library books route (blocked by Spatie role middleware)
         $response = $this->actingAs($studentUser)->get('/school/library/books');
@@ -243,31 +221,9 @@ class EnsureSchoolModuleMiddlewareTest extends TestCase
     {
         Config::set('entitlement.mode', 'enforce');
 
-        $school = $this->createSchool('School Portal Gate');
+        [$school] = $this->createSchoolWithSubscription('School Portal Gate', ['timetable']);
         $studentUser = User::factory()->create(['school_id' => $school->id]);
         $studentUser->assignRole('student');
-
-        // No attendance module in package
-        $package = Package::create([
-            'name' => 'No Attendance Plan',
-            'slug' => 'no-attendance',
-            'price_monthly' => 10,
-            'price_yearly' => 100,
-            'max_students' => 100,
-            'max_staff' => 10,
-            'storage_gb' => 5,
-            'is_active' => true,
-        ]);
-        PackageModule::create(['package_id' => $package->id, 'module_slug' => 'timetable']);
-
-        SchoolSubscription::create([
-            'school_id' => $school->id,
-            'package_id' => $package->id,
-            'start_date' => Carbon::yesterday(),
-            'end_date' => Carbon::tomorrow(),
-            'status' => 'active',
-            'amount_paid' => 10,
-        ]);
 
         // Student portal dashboard is CORE (ungated)
         $resDashboard = $this->actingAs($studentUser)->get('/school/student/dashboard');
@@ -286,9 +242,7 @@ class EnsureSchoolModuleMiddlewareTest extends TestCase
     {
         Config::set('entitlement.mode', 'enfore'); // Typo / invalid mode
 
-        $school = $this->createSchool('School Invalid Mode');
-        $user = User::factory()->create(['school_id' => $school->id]);
-        $user->assignRole('school-admin');
+        [$school, $user] = $this->createSchoolWithSubscription('School Invalid Mode', ['library']);
 
         $this->expectException(\InvalidArgumentException::class);
         $this->expectExceptionMessage("Invalid entitlement mode 'enfore'");

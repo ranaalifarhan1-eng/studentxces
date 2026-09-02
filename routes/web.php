@@ -38,6 +38,7 @@ use App\Http\Controllers\SchoolAdmin\VisitorLogController;
 use App\Http\Controllers\PublicAdmissionController;
 use App\Http\Controllers\StudentPortalController;
 use App\Http\Controllers\ParentPortalController;
+use App\Http\Controllers\SchoolAdmin\SubscriptionNoticeController;
 use App\Http\Controllers\SuperAdmin\CouponController;
 use App\Http\Controllers\SuperAdmin\ModuleManagerController;
 use App\Http\Controllers\SuperAdmin\PackageController;
@@ -97,6 +98,9 @@ Route::middleware('auth')->group(function () {
         ->prefix('school')
         ->name('school.')
         ->group(function () {
+            // Subscription Notice (Accessible when suspended/expired)
+            Route::get('subscription-notice', [SubscriptionNoticeController::class, 'show'])->name('subscription.notice');
+
             // Core School Dashboard (Ungated)
             Route::get('reports/dashboard', [ReportController::class, 'dashboard'])->name('reports.dashboard');
 

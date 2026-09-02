@@ -128,6 +128,24 @@ class EntitlementAuditCommandTest extends TestCase
     public function test_inertia_entitlement_props_contain_only_approved_non_sensitive_fields(): void
     {
         $school = $this->createSchool('Inertia Test School');
+        $pkg = \App\Models\Package::firstOrCreate(
+            ['slug' => 'test-all-access-pkg'],
+            [
+                'name'          => 'Test All Access',
+                'currency'      => 'PKR',
+                'price_monthly' => 100,
+                'is_active'     => true,
+                'is_internal'   => false,
+            ]
+        );
+        \App\Models\SchoolSubscription::create([
+            'school_id'   => $school->id,
+            'package_id'  => $pkg->id,
+            'start_date'  => now()->subDay(),
+            'end_date'    => now()->addYear(),
+            'status'      => 'active',
+            'amount_paid' => 100,
+        ]);
         $user = User::factory()->create(['school_id' => $school->id]);
         $user->assignRole('school-admin');
 

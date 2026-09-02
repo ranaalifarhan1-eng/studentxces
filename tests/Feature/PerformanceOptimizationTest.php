@@ -50,6 +50,26 @@ class PerformanceOptimizationTest extends TestCase
             'timezone' => 'Asia/Karachi',
         ]);
 
+        $pkg = \App\Models\Package::firstOrCreate(
+            ['slug' => 'legacy-all-access'],
+            [
+                'name'          => 'Legacy All Access',
+                'currency'      => 'PKR',
+                'price_monthly' => 0,
+                'is_active'     => false,
+                'is_internal'   => true,
+            ]
+        );
+
+        \App\Models\SchoolSubscription::create([
+            'school_id'   => $this->school->id,
+            'package_id'  => $pkg->id,
+            'start_date'  => now()->subDay(),
+            'end_date'    => now()->addYear(),
+            'status'      => 'active',
+            'amount_paid' => 0,
+        ]);
+
         SchoolDomain::create([
             'school_id'   => $this->school->id,
             'hostname'    => 'app.lahorecambridge.com',

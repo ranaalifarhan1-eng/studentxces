@@ -69,6 +69,28 @@ class TenantDomainResolutionTest extends TestCase
             'timezone' => 'Asia/Karachi',
         ]);
 
+        $pkg = \App\Models\Package::firstOrCreate(
+            ['slug' => 'test-all-access-pkg'],
+            [
+                'name'          => 'Test All Access',
+                'currency'      => 'PKR',
+                'price_monthly' => 100,
+                'is_active'     => true,
+                'is_internal'   => false,
+            ]
+        );
+
+        foreach ([$this->schoolA, $this->schoolB] as $sch) {
+            \App\Models\SchoolSubscription::create([
+                'school_id'   => $sch->id,
+                'package_id'  => $pkg->id,
+                'start_date'  => now()->subDay(),
+                'end_date'    => now()->addYear(),
+                'status'      => 'active',
+                'amount_paid' => 100,
+            ]);
+        }
+
         // Create Super Admin
         $this->superAdmin = User::create([
             'name'      => 'Super Admin',

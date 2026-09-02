@@ -173,7 +173,7 @@ export default function PackagesIndex({ packages, availableModules }: Props) {
                     </Button>
                 </div>
 
-                <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3">
+                <div className="grid gap-6 md:grid-cols-2 xl:grid-cols-3 pt-3">
                     {packages.length === 0 && (
                         <Card className="col-span-3">
                             <CardContent className="py-12 text-center text-slate-400">
@@ -197,19 +197,19 @@ export default function PackagesIndex({ packages, availableModules }: Props) {
                                     isPopular
                                         ? 'border-indigo-500/80 shadow-md ring-1 ring-indigo-500/30'
                                         : 'border-slate-200 dark:border-slate-800'
-                                } ${!p.is_active ? 'opacity-60 bg-slate-50/50 dark:bg-slate-900/30' : 'bg-white dark:bg-slate-900'}`}
+                                } ${!p.is_active ? 'opacity-70 bg-slate-50/50 dark:bg-slate-900/30' : 'bg-white dark:bg-slate-900'}`}
                             >
                                 <div>
                                     {p.badge && (
-                                        <div className="absolute -top-3 left-4">
-                                            <Badge className="bg-indigo-600 text-white shadow-sm font-medium px-2.5 py-0.5 flex items-center gap-1">
-                                                <Sparkles className="w-3 h-3" />
+                                        <div className="absolute -top-3.5 left-5 z-10">
+                                            <Badge className="bg-indigo-600 hover:bg-indigo-600 text-white shadow-md font-semibold text-xs px-3 py-0.5 flex items-center gap-1.5 ring-2 ring-white dark:ring-slate-900">
+                                                <Sparkles className="w-3.5 h-3.5" />
                                                 {p.badge}
                                             </Badge>
                                         </div>
                                     )}
 
-                                    <CardHeader className="pb-3 pt-5">
+                                    <CardHeader className={`pb-3 ${p.badge ? 'pt-6' : 'pt-5'}`}>
                                         <div className="flex items-start justify-between gap-2">
                                             <div>
                                                 <CardTitle className="text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -236,53 +236,85 @@ export default function PackagesIndex({ packages, availableModules }: Props) {
                                     </CardHeader>
 
                                     <CardContent className="space-y-4">
-                                        {/* Reference Base Monthly Rate */}
-                                        <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/80 border border-slate-100 dark:border-slate-700/60">
-                                            <div className="flex items-baseline justify-between">
-                                                <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Base Reference</span>
-                                                <div className="text-right">
-                                                    <span className="text-xl font-extrabold text-slate-900 dark:text-white">
-                                                        {currency} {Number(p.price_monthly).toLocaleString()}
+                                        {p.is_internal ? (
+                                            /* Internal Grandfathered Tier (Non-Commercial) */
+                                            <div className="p-4 rounded-lg bg-amber-50/70 dark:bg-amber-950/30 border border-amber-200/80 dark:border-amber-800/60 space-y-3">
+                                                <div className="flex items-center gap-2">
+                                                    <span className="inline-flex items-center justify-center p-1.5 rounded-md bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-300">
+                                                        <Sparkles className="w-4 h-4" />
                                                     </span>
-                                                    <span className="text-xs text-slate-500 dark:text-slate-400">/mo</span>
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        {/* Multi-Term Pricing Grid */}
-                                        <div>
-                                            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                                                Purchasable Terms
-                                            </p>
-
-                                            <div className="grid grid-cols-3 gap-2">
-                                                {/* 3 Months */}
-                                                <div className="p-2.5 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-center">
-                                                    <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">3 Months</div>
-                                                    <div className="text-xs font-bold text-slate-900 dark:text-white mt-1">
-                                                        {term3 ? `${currency} ${Number(term3.total_price).toLocaleString()}` : `${currency} ${(Number(p.price_monthly) * 3).toLocaleString()}`}
+                                                    <div>
+                                                        <h4 className="text-xs font-bold text-amber-900 dark:text-amber-200 uppercase tracking-wide">
+                                                            Protected System Tier
+                                                        </h4>
+                                                        <p className="text-[11px] text-amber-700/90 dark:text-amber-400">
+                                                            Internal grandfathered full-access entitlement
+                                                        </p>
                                                     </div>
                                                 </div>
-
-                                                {/* 6 Months */}
-                                                <div className="p-2.5 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-center relative">
-                                                    <span className="absolute -top-2 right-1 text-[9px] bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 font-bold px-1 rounded">5% OFF</span>
-                                                    <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">6 Months</div>
-                                                    <div className="text-xs font-bold text-slate-900 dark:text-white mt-1">
-                                                        {term6 ? `${currency} ${Number(term6.total_price).toLocaleString()}` : `${currency} ${Math.round(Number(p.price_monthly) * 6 * 0.95).toLocaleString()}`}
+                                                <div className="text-xs text-slate-600 dark:text-slate-300 bg-white/90 dark:bg-slate-900/90 p-3 rounded-md border border-amber-100 dark:border-amber-900/40 space-y-1.5">
+                                                    <div className="flex items-center justify-between font-medium">
+                                                        <span className="text-slate-500 dark:text-slate-400">Subscription Availability</span>
+                                                        <span className="text-amber-800 dark:text-amber-300 font-semibold text-xs">Not available for new subscriptions</span>
                                                     </div>
-                                                </div>
-
-                                                {/* 12 Months */}
-                                                <div className="p-2.5 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-center relative">
-                                                    <span className="absolute -top-2 right-1 text-[9px] bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 font-bold px-1 rounded">10% OFF</span>
-                                                    <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">12 Months</div>
-                                                    <div className="text-xs font-bold text-slate-900 dark:text-white mt-1">
-                                                        {term12 ? `${currency} ${Number(term12.total_price).toLocaleString()}` : `${currency} ${Math.round(Number(p.price_monthly) * 12 * 0.90).toLocaleString()}`}
+                                                    <div className="flex items-center justify-between text-slate-500 dark:text-slate-400 text-[11px]">
+                                                        <span>Commercial Billing</span>
+                                                        <span>Exempt / Non-purchasable</span>
                                                     </div>
                                                 </div>
                                             </div>
-                                        </div>
+                                        ) : (
+                                            /* Commercial Package Rates & Multi-Term Pricing */
+                                            <>
+                                                {/* Reference Base Monthly Rate */}
+                                                <div className="p-3 rounded-lg bg-slate-50 dark:bg-slate-800/80 border border-slate-100 dark:border-slate-700/60">
+                                                    <div className="flex items-baseline justify-between">
+                                                        <span className="text-xs font-medium text-slate-500 dark:text-slate-400">Base Reference</span>
+                                                        <div className="text-right">
+                                                            <span className="text-xl font-extrabold text-slate-900 dark:text-white">
+                                                                {currency} {Number(p.price_monthly).toLocaleString()}
+                                                            </span>
+                                                            <span className="text-xs text-slate-500 dark:text-slate-400">/mo</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+
+                                                {/* Multi-Term Pricing Grid */}
+                                                <div>
+                                                    <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
+                                                        Purchasable Terms
+                                                    </p>
+
+                                                    <div className="grid grid-cols-3 gap-2">
+                                                        {/* 3 Months */}
+                                                        <div className="p-2.5 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-center">
+                                                            <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">3 Months</div>
+                                                            <div className="text-xs font-bold text-slate-900 dark:text-white mt-1">
+                                                                {term3 ? `${currency} ${Number(term3.total_price).toLocaleString()}` : `${currency} ${(Number(p.price_monthly) * 3).toLocaleString()}`}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* 6 Months */}
+                                                        <div className="p-2.5 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-center relative">
+                                                            <span className="absolute -top-2 right-1 text-[9px] bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300 font-bold px-1 rounded">5% OFF</span>
+                                                            <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">6 Months</div>
+                                                            <div className="text-xs font-bold text-slate-900 dark:text-white mt-1">
+                                                                {term6 ? `${currency} ${Number(term6.total_price).toLocaleString()}` : `${currency} ${Math.round(Number(p.price_monthly) * 6 * 0.95).toLocaleString()}`}
+                                                            </div>
+                                                        </div>
+
+                                                        {/* 12 Months */}
+                                                        <div className="p-2.5 rounded-md bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-center relative">
+                                                            <span className="absolute -top-2 right-1 text-[9px] bg-indigo-100 text-indigo-700 dark:bg-indigo-950 dark:text-indigo-300 font-bold px-1 rounded">10% OFF</span>
+                                                            <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">12 Months</div>
+                                                            <div className="text-xs font-bold text-slate-900 dark:text-white mt-1">
+                                                                {term12 ? `${currency} ${Number(term12.total_price).toLocaleString()}` : `${currency} ${Math.round(Number(p.price_monthly) * 12 * 0.90).toLocaleString()}`}
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </>
+                                        )}
 
                                         {/* Capacity & Limits */}
                                         <div className="grid grid-cols-3 gap-2 py-2 border-y border-slate-100 dark:border-slate-800 text-xs text-slate-600 dark:text-slate-400">

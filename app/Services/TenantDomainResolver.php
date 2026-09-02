@@ -8,6 +8,21 @@ use App\Models\SchoolDomain;
 class TenantDomainResolver
 {
     /**
+     * Request-scoped memoization cache for resolved hosts.
+     *
+     * @var array<string, School|null>
+     */
+    protected array $resolvedHosts = [];
+
+    /**
+     * Clear request-scoped resolved host cache (useful for testing).
+     */
+    public function clearCache(): void
+    {
+        $this->resolvedHosts = [];
+    }
+
+    /**
      * Resolve an active tenant School from an incoming HTTP host header.
      *
      * @param  string|null  $host
@@ -22,14 +37,18 @@ class TenantDomainResolver
         // Strip port if present
         $cleanHost = strtolower(trim(explode(':', $host)[0]));
 
+        if (array_key_exists($cleanHost, $this->resolvedHosts)) {
+            return $this->resolvedHosts[$cleanHost];
+        }
+
         // Local development exception
         if ($this->isDevelopmentHost($cleanHost)) {
-            return null;
+            return $this->resolvedHosts[$cleanHost] = null;
         }
 
         // Platform admin host exception
         if ($this->isPlatformAdminHost($cleanHost)) {
-            return null;
+            return $this->resolvedHosts[$cleanHost] = null;
         }
 
         $allowVerified = (bool) config('tenancy.allow_verified_domains', false);
@@ -47,11 +66,11 @@ class TenantDomainResolver
         $domain = $query->first();
 
         if ($domain && $domain->school && $domain->school->status === 'active') {
-            return $domain->school;
+            return $this->resolvedHosts[$cleanHost] = $domain->school;
         }
 
         // Fail closed for unknown, disabled, unverified, or ssl-pending hosts in production
-        return null;
+        return $this->resolvedHosts[$cleanHost] = null;
     }
 
     /**

@@ -42,9 +42,15 @@ class LegacyEntitlementProvisioner
                 'max_staff'     => $attributes['max_staff'] ?? 0,    // 0 = unlimited by schema definition
                 'storage_gb'    => $attributes['storage_gb'] ?? 100,
                 'is_active'     => $attributes['is_active'] ?? false, // Inactive by default to isolate from public dropdowns
+                'is_internal'   => true, // Grandfathered internal tier
             ]);
         } elseif ($package->trashed()) {
             $package->restore();
+            $package->update(['is_internal' => true]);
+        } else {
+            if (! $package->is_internal) {
+                $package->update(['is_internal' => true]);
+            }
         }
 
         // Attach canonical modules idempotently

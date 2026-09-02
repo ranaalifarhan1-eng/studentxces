@@ -66,17 +66,64 @@ class CommercialPackageProvisioner
     ) {}
 
     /**
+     * Dry run simulation: Inspect what would be created or updated without making any DB writes.
+     *
+     * @return array<string, array>
+     */
+    public function previewProvision(): array
+    {
+        $preview = [];
+
+        foreach (self::PACKAGES as $key => $config) {
+            $package = Package::withTrashed()->where('slug', $config['slug'])->first();
+            $action = 'WOULD_CREATE';
+            $hasSubscriptions = false;
+
+            if ($package) {
+                $action = $package->trashed() ? 'WOULD_RESTORE_AND_UPDATE' : 'WOULD_UPDATE';
+                $hasSubscriptions = $package->subscriptions()->exists();
+            }
+
+            $terms = $this->pricingService->calculateAllTerms($config['base_monthly'], $config['currency']);
+
+            $preview[$key] = [
+                'name'              => $config['name'],
+                'slug'              => $config['slug'],
+                'action'            => $action,
+                'has_subscriptions' => $hasSubscriptions,
+                'badge'             => $config['badge'],
+                'currency'          => $config['currency'],
+                'base_monthly'      => $config['base_monthly'],
+                'terms'             => $terms,
+                'max_students'      => $config['max_students'],
+                'max_staff'         => $config['max_staff'],
+                'storage_gb'        => $config['storage_gb'],
+                'modules'           => $config['modules'],
+            ];
+        }
+
+        return $preview;
+    }
+
+    /**
      * Provision all 3 canonical commercial packages with their multi-term pricing and modules.
      *
+     * @param bool $forceSafeUpdate If true, permits updating configuration even if subscriptions exist without altering subscription snapshot integrity
      * @return array<string, Package>
      */
-    public function provisionAll(): array
+    public function provisionAll(bool $forceSafeUpdate = false): array
     {
-        return DB::transaction(function () {
+        return DB::transaction(function () use ($forceSafeUpdate) {
             $created = [];
 
             foreach (self::PACKAGES as $key => $config) {
                 $package = Package::withTrashed()->where('slug', $config['slug'])->first();
+
+                if ($package && $package->subscriptions()->exists() && ! $forceSafeUpdate) {
+                    throw new \RuntimeException(
+                        "Safety check failed: Package '{$package->name}' (slug: {$package->slug}) has live subscriptions. Overwriting modules or prices automatically is blocked. Pass explicit force flag if intended."
+                    );
+                }
 
                 if (! $package) {
                     $package = Package::create([
@@ -86,11 +133,12 @@ class CommercialPackageProvisioner
                         'badge'         => $config['badge'],
                         'currency'      => $config['currency'],
                         'price_monthly' => $config['base_monthly'],
-                        'price_yearly'  => $config['base_monthly'] * 12 * 0.90,
+                        'price_yearly'  => round($config['base_monthly'] * 12 * 0.90, 2),
                         'max_students'  => $config['max_students'],
                         'max_staff'     => $config['max_staff'],
                         'storage_gb'    => $config['storage_gb'],
                         'is_active'     => $config['is_active'],
+                        'is_internal'   => false,
                     ]);
                 } else {
                     if ($package->trashed()) {
@@ -105,6 +153,7 @@ class CommercialPackageProvisioner
                         'max_staff'    => $config['max_staff'],
                         'storage_gb'   => $config['storage_gb'],
                         'is_active'    => $config['is_active'],
+                        'is_internal'  => false,
                     ]);
                 }
 
@@ -125,5 +174,49 @@ class CommercialPackageProvisioner
 
             return $created;
         });
+    }
+
+    /**
+     * Preview or execute deprovisioning of commercial packages (Starter, Standard, Pro).
+     * Strictly refuses if any commercial package has subscriptions.
+     * Strictly refuses to touch internal packages (Legacy All Access).
+     *
+     * @param bool $execute
+     * @return array<string, string>
+     */
+    public function deprovisionAll(bool $execute = false): array
+    {
+        $targetSlugs = array_keys(self::PACKAGES);
+        $results = [];
+
+        foreach ($targetSlugs as $slug) {
+            $package = Package::withTrashed()->where('slug', $slug)->first();
+
+            if (! $package) {
+                $results[$slug] = 'NOT_FOUND';
+                continue;
+            }
+
+            if ($package->is_internal) {
+                throw new \RuntimeException("Safety violation: Refusing to deprovision internal package '{$package->slug}'.");
+            }
+
+            if ($package->subscriptions()->exists()) {
+                throw new \RuntimeException("Safety violation: Cannot deprovision package '{$package->name}' because it has active subscriptions.");
+            }
+
+            if ($execute) {
+                DB::transaction(function () use ($package) {
+                    $package->prices()->delete();
+                    $package->modules()->delete();
+                    $package->forceDelete();
+                });
+                $results[$slug] = 'DELETED';
+            } else {
+                $results[$slug] = 'WOULD_DELETE';
+            }
+        }
+
+        return $results;
     }
 }

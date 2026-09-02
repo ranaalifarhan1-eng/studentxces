@@ -12,12 +12,13 @@ class Package extends Model
 
     protected $fillable = [
         'name', 'slug', 'badge', 'description', 'price_monthly', 'price_yearly',
-        'currency', 'max_students', 'max_staff', 'storage_gb', 'is_active', 'features',
+        'currency', 'max_students', 'max_staff', 'storage_gb', 'is_active', 'is_internal', 'features',
     ];
 
     protected $casts = [
         'features'      => 'array',
         'is_active'     => 'boolean',
+        'is_internal'   => 'boolean',
         'price_monthly' => 'decimal:2',
         'price_yearly'  => 'decimal:2',
     ];

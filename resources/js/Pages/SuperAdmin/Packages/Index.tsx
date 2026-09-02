@@ -38,6 +38,7 @@ interface Pkg {
     max_staff: number;
     storage_gb: number;
     is_active: boolean;
+    is_internal?: boolean;
     subscriptions_count: number;
     modules: PkgModule[];
     prices?: PkgPrice[];
@@ -216,9 +217,16 @@ export default function PackagesIndex({ packages, availableModules }: Props) {
                                                 </CardTitle>
                                                 <p className="text-xs text-slate-400 font-mono mt-0.5">{p.slug}</p>
                                             </div>
-                                            <Badge variant={p.is_active ? 'default' : 'secondary'} className="text-xs font-normal">
-                                                {p.is_active ? 'Active' : 'Inactive'}
-                                            </Badge>
+                                            <div className="flex items-center gap-1.5">
+                                                {p.is_internal && (
+                                                    <span className="text-[11px] font-semibold bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 px-2 py-0.5 rounded border border-amber-200 dark:border-amber-800">
+                                                        Internal / Grandfathered
+                                                    </span>
+                                                )}
+                                                <Badge variant={p.is_active ? 'default' : 'secondary'} className="text-xs font-normal">
+                                                    {p.is_active ? 'Active' : 'Inactive'}
+                                                </Badge>
+                                            </div>
                                         </div>
                                         {p.description && (
                                             <p className="text-xs text-slate-500 dark:text-slate-400 mt-2 min-h-[32px] line-clamp-2">
@@ -239,14 +247,11 @@ export default function PackagesIndex({ packages, availableModules }: Props) {
                                                     <span className="text-xs text-slate-500 dark:text-slate-400">/mo</span>
                                                 </div>
                                             </div>
-                                            <p className="text-[11px] text-indigo-600 dark:text-indigo-400 font-medium mt-1">
-                                                From {currency} {term3 ? Number(term3.total_price).toLocaleString() : (Number(p.price_monthly) * 3).toLocaleString()} / 3 months
-                                            </p>
                                         </div>
 
-                                        {/* Multi-Term Breakdown */}
-                                        <div className="space-y-2">
-                                            <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                                        {/* Multi-Term Pricing Grid */}
+                                        <div>
+                                            <p className="text-[11px] font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
                                                 Purchasable Terms
                                             </p>
 
@@ -257,7 +262,6 @@ export default function PackagesIndex({ packages, availableModules }: Props) {
                                                     <div className="text-xs font-bold text-slate-900 dark:text-white mt-1">
                                                         {term3 ? `${currency} ${Number(term3.total_price).toLocaleString()}` : `${currency} ${(Number(p.price_monthly) * 3).toLocaleString()}`}
                                                     </div>
-                                                    <div className="text-[10px] text-slate-400 mt-0.5">0% discount</div>
                                                 </div>
 
                                                 {/* 6 Months */}
@@ -267,9 +271,6 @@ export default function PackagesIndex({ packages, availableModules }: Props) {
                                                     <div className="text-xs font-bold text-slate-900 dark:text-white mt-1">
                                                         {term6 ? `${currency} ${Number(term6.total_price).toLocaleString()}` : `${currency} ${Math.round(Number(p.price_monthly) * 6 * 0.95).toLocaleString()}`}
                                                     </div>
-                                                    <div className="text-[10px] text-emerald-600 dark:text-emerald-400 font-medium mt-0.5">
-                                                        Save {currency} {term6 ? Number(term6.savings_amount || (Number(p.price_monthly) * 6 * 0.05)).toLocaleString() : Math.round(Number(p.price_monthly) * 6 * 0.05).toLocaleString()}
-                                                    </div>
                                                 </div>
 
                                                 {/* 12 Months */}
@@ -278,9 +279,6 @@ export default function PackagesIndex({ packages, availableModules }: Props) {
                                                     <div className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">12 Months</div>
                                                     <div className="text-xs font-bold text-slate-900 dark:text-white mt-1">
                                                         {term12 ? `${currency} ${Number(term12.total_price).toLocaleString()}` : `${currency} ${Math.round(Number(p.price_monthly) * 12 * 0.90).toLocaleString()}`}
-                                                    </div>
-                                                    <div className="text-[10px] text-indigo-600 dark:text-indigo-400 font-medium mt-0.5">
-                                                        Save {currency} {term12 ? Number(term12.savings_amount || (Number(p.price_monthly) * 12 * 0.10)).toLocaleString() : Math.round(Number(p.price_monthly) * 12 * 0.10).toLocaleString()}
                                                     </div>
                                                 </div>
                                             </div>
@@ -320,13 +318,13 @@ export default function PackagesIndex({ packages, availableModules }: Props) {
                                             </div>
 
                                             {isExpanded ? (
-                                                <div className="flex flex-wrap gap-1 p-2 bg-slate-50 dark:bg-slate-800/50 rounded border border-slate-100 dark:border-slate-800 max-h-36 overflow-y-auto">
+                                                <div className="flex flex-wrap gap-1 pt-1 max-h-40 overflow-y-auto">
                                                     {p.modules.map(m => (
                                                         <span
                                                             key={m.module_slug}
-                                                            className="text-[11px] px-1.5 py-0.5 rounded bg-indigo-50 dark:bg-indigo-950/50 text-indigo-700 dark:text-indigo-300 border border-indigo-100 dark:border-indigo-900/50 flex items-center gap-1"
+                                                            className="inline-flex items-center gap-1 text-[11px] bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 px-2 py-0.5 rounded"
                                                         >
-                                                            <Check className="w-2.5 h-2.5 text-indigo-500" />
+                                                            <Check className="w-3 h-3 text-emerald-500" />
                                                             {moduleLabel(m.module_slug)}
                                                         </span>
                                                     ))}
@@ -345,12 +343,27 @@ export default function PackagesIndex({ packages, availableModules }: Props) {
                                     <div className="flex items-center justify-between text-xs text-slate-400 pt-2 border-t border-slate-100 dark:border-slate-800">
                                         <span>{p.subscriptions_count} active school{p.subscriptions_count !== 1 ? 's' : ''}</span>
                                         <div className="flex gap-1.5">
-                                            <Button size="sm" variant="outline" className="h-7 px-2.5 gap-1 text-xs" onClick={() => openEdit(p)}>
-                                                <Edit className="w-3 h-3" /> Edit
-                                            </Button>
-                                            <Button size="sm" variant="outline" className="h-7 px-2 gap-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30" onClick={() => setDelPkg(p)}>
-                                                <Trash2 className="w-3 h-3" />
-                                            </Button>
+                                            {p.is_internal ? (
+                                                <span className="text-[11px] font-medium text-amber-700 dark:text-amber-300 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded border border-amber-200 dark:border-amber-800">
+                                                    Protected System Tier
+                                                </span>
+                                            ) : (
+                                                <>
+                                                    <Button size="sm" variant="outline" className="h-7 px-2.5 gap-1 text-xs" onClick={() => openEdit(p)}>
+                                                        <Edit className="w-3 h-3" /> Edit
+                                                    </Button>
+                                                    <Button
+                                                        size="sm"
+                                                        variant="outline"
+                                                        disabled={p.subscriptions_count > 0}
+                                                        className="h-7 px-2 gap-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30 disabled:opacity-40"
+                                                        onClick={() => setDelPkg(p)}
+                                                        title={p.subscriptions_count > 0 ? "Cannot delete package with active subscriptions" : "Delete package"}
+                                                    >
+                                                        <Trash2 className="w-3 h-3" />
+                                                    </Button>
+                                                </>
+                                            )}
                                         </div>
                                     </div>
                                 </CardContent>

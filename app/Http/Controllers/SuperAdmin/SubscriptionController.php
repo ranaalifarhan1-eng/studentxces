@@ -65,28 +65,59 @@ class SubscriptionController extends Controller
             'billing_term_months' => 'nullable|integer|in:3,6,12',
             'coupon_id'           => 'nullable|integer|exists:coupons,id',
             'start_date'          => 'required|date',
-            'end_date'            => 'required|date|after:start_date',
+            'end_date'            => 'nullable|date',
             'status'              => 'required|in:trial,active,expired,suspended',
             'is_trial'            => 'boolean',
             'trial_ends_at'       => 'nullable|date',
-            'amount_paid'         => 'required|numeric|min:0',
+            'amount_paid'         => 'nullable|numeric|min:0',
             'payment_method'      => 'nullable|string|max:50',
             'notes'               => 'nullable|string|max:500',
         ]);
 
-        // Capture commercial pricing snapshot if term is provided
+        $package = Package::findOrFail($data['package_id']);
+        if ($package->is_internal) {
+            return back()->withErrors(['package_id' => 'Cannot commercially assign internal grandfathered package.']);
+        }
+
+        // Amount paid default 0 if not explicitly entered
+        $data['amount_paid'] = isset($data['amount_paid']) ? (float) $data['amount_paid'] : 0.00;
+
+        // Capture commercial pricing snapshot & server-authoritative end date if term is provided
         if (! empty($data['billing_term_months'])) {
             $months = (int) $data['billing_term_months'];
-            $priceRow = PackagePrice::where('package_id', $data['package_id'])
+            $data['end_date'] = \Carbon\Carbon::parse($data['start_date'])->addMonths($months)->toDateString();
+
+            $priceRow = PackagePrice::where('package_id', $package->id)
                 ->where('term_months', $months)
+                ->where('is_active', true)
                 ->first();
 
-            if ($priceRow) {
-                $data['package_price_id']    = $priceRow->id;
-                $data['base_monthly_price']  = $priceRow->base_monthly_price;
-                $data['discount_percent']    = $priceRow->discount_percent;
-                $data['billed_amount']       = $priceRow->total_price;
-                $data['currency']            = $priceRow->currency;
+            if (! $priceRow) {
+                return back()->withErrors(['billing_term_months' => 'No active commercial price found for selected package and billing term.']);
+            }
+
+            $termPrice = (float) $priceRow->total_price;
+            $billedAmount = $termPrice;
+
+            if (! empty($data['coupon_id'])) {
+                $coupon = Coupon::where('id', $data['coupon_id'])->where('is_active', true)->first();
+                if ($coupon) {
+                    if ($coupon->type === 'percent') {
+                        $billedAmount = round($termPrice * (1 - ((float) $coupon->value / 100)), 2);
+                    } else {
+                        $billedAmount = max(0.00, round($termPrice - (float) $coupon->value, 2));
+                    }
+                }
+            }
+
+            $data['package_price_id']    = $priceRow->id;
+            $data['base_monthly_price']  = $priceRow->base_monthly_price;
+            $data['discount_percent']    = $priceRow->discount_percent;
+            $data['billed_amount']       = $billedAmount;
+            $data['currency']            = $priceRow->currency ?? 'PKR';
+        } else {
+            if (empty($data['end_date']) || $data['end_date'] <= $data['start_date']) {
+                return back()->withErrors(['end_date' => 'End date must be after start date.']);
             }
         }
 
@@ -102,27 +133,57 @@ class SubscriptionController extends Controller
             'billing_term_months' => 'nullable|integer|in:3,6,12',
             'coupon_id'           => 'nullable|integer|exists:coupons,id',
             'start_date'          => 'required|date',
-            'end_date'            => 'required|date|after:start_date',
+            'end_date'            => 'nullable|date',
             'status'              => 'required|in:trial,active,expired,suspended',
             'is_trial'            => 'boolean',
             'trial_ends_at'       => 'nullable|date',
-            'amount_paid'         => 'required|numeric|min:0',
+            'amount_paid'         => 'nullable|numeric|min:0',
             'payment_method'      => 'nullable|string|max:50',
             'notes'               => 'nullable|string|max:500',
         ]);
 
+        $package = Package::findOrFail($data['package_id']);
+        if ($package->is_internal && $subscription->package_id !== $package->id) {
+            return back()->withErrors(['package_id' => 'Cannot switch to internal grandfathered package.']);
+        }
+
+        $data['amount_paid'] = isset($data['amount_paid']) ? (float) $data['amount_paid'] : (float) $subscription->amount_paid;
+
         if (! empty($data['billing_term_months'])) {
             $months = (int) $data['billing_term_months'];
-            $priceRow = PackagePrice::where('package_id', $data['package_id'])
+            $data['end_date'] = \Carbon\Carbon::parse($data['start_date'])->addMonths($months)->toDateString();
+
+            $priceRow = PackagePrice::where('package_id', $package->id)
                 ->where('term_months', $months)
+                ->where('is_active', true)
                 ->first();
 
-            if ($priceRow) {
-                $data['package_price_id']    = $priceRow->id;
-                $data['base_monthly_price']  = $priceRow->base_monthly_price;
-                $data['discount_percent']    = $priceRow->discount_percent;
-                $data['billed_amount']       = $priceRow->total_price;
-                $data['currency']            = $priceRow->currency;
+            if (! $priceRow) {
+                return back()->withErrors(['billing_term_months' => 'No active commercial price found for selected package and billing term.']);
+            }
+
+            $termPrice = (float) $priceRow->total_price;
+            $billedAmount = $termPrice;
+
+            if (! empty($data['coupon_id'])) {
+                $coupon = Coupon::where('id', $data['coupon_id'])->where('is_active', true)->first();
+                if ($coupon) {
+                    if ($coupon->type === 'percent') {
+                        $billedAmount = round($termPrice * (1 - ((float) $coupon->value / 100)), 2);
+                    } else {
+                        $billedAmount = max(0.00, round($termPrice - (float) $coupon->value, 2));
+                    }
+                }
+            }
+
+            $data['package_price_id']    = $priceRow->id;
+            $data['base_monthly_price']  = $priceRow->base_monthly_price;
+            $data['discount_percent']    = $priceRow->discount_percent;
+            $data['billed_amount']       = $billedAmount;
+            $data['currency']            = $priceRow->currency ?? 'PKR';
+        } else {
+            if (empty($data['end_date']) || $data['end_date'] <= $data['start_date']) {
+                return back()->withErrors(['end_date' => 'End date must be after start date.']);
             }
         }
 

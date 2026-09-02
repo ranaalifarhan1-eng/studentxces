@@ -90,6 +90,10 @@ class PackageController extends Controller
 
     public function update(Request $request, Package $package): RedirectResponse
     {
+        if ($package->is_internal) {
+            return back()->with('error', 'Cannot modify internal grandfathered package.');
+        }
+
         $availableModules = self::availableModules();
         $data = $request->validate([
             'name'               => 'required|string|max:100',
@@ -134,8 +138,12 @@ class PackageController extends Controller
 
     public function destroy(Package $package): RedirectResponse
     {
+        if ($package->is_internal) {
+            return back()->with('error', 'Cannot delete internal grandfathered package.');
+        }
+
         if ($package->subscriptions()->exists()) {
-            return back()->with('error', 'Cannot delete a package with active subscriptions.');
+            return back()->with('error', 'Cannot delete a package with subscriptions.');
         }
 
         $package->delete();

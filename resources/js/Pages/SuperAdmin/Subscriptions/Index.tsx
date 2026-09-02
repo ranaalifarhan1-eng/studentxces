@@ -58,6 +58,8 @@ export default function SubscriptionsIndex({ subscriptions, schools, packages, c
         notes: '',
     });
 
+    const [calculatedDue, setCalculatedDue] = useState<number>(0);
+
     function calculateEndDate(startDateStr: string, months: number): string {
         if (!startDateStr) return '';
         const d = new Date(startDateStr);
@@ -65,41 +67,47 @@ export default function SubscriptionsIndex({ subscriptions, schools, packages, c
         return d.toISOString().split('T')[0];
     }
 
-    function handlePackageOrTermChange(pkgId: string, termMonthsStr: string, couponIdStr: string, startDateStr: string) {
+    function calculateDueAmount(pkgId: string, termMonthsStr: string, couponIdStr: string): number {
         const pkg = packages.find(p => String(p.id) === pkgId);
         const term = parseInt(termMonthsStr, 10) || 3;
-        const newEndDate = calculateEndDate(startDateStr || form.data.start_date, term);
+        let amount = 0;
 
-        let calculatedAmount = 0;
         if (pkg) {
             const priceTerm = pkg.prices?.find(pr => pr.term_months === term);
             if (priceTerm) {
-                calculatedAmount = parseFloat(priceTerm.total_price) || 0;
+                amount = parseFloat(priceTerm.total_price) || 0;
             } else {
                 const base = parseFloat(pkg.price_monthly) || 0;
                 const discount = term === 12 ? 0.10 : (term === 6 ? 0.05 : 0);
-                calculatedAmount = Math.round(base * term * (1 - discount));
+                amount = Math.round(base * term * (1 - discount));
             }
         }
 
-        // Apply coupon if selected
         if (couponIdStr && couponIdStr !== '_none') {
             const c = coupons.find(cp => String(cp.id) === couponIdStr);
             if (c) {
                 if (c.type === 'percent') {
-                    calculatedAmount = Math.round(calculatedAmount * (1 - parseFloat(c.value) / 100));
+                    amount = Math.round(amount * (1 - parseFloat(c.value) / 100));
                 } else {
-                    calculatedAmount = Math.max(0, calculatedAmount - parseFloat(c.value));
+                    amount = Math.max(0, amount - parseFloat(c.value));
                 }
             }
         }
+
+        return amount;
+    }
+
+    function handlePackageOrTermChange(pkgId: string, termMonthsStr: string, couponIdStr: string, startDateStr: string) {
+        const term = parseInt(termMonthsStr, 10) || 3;
+        const newEndDate = calculateEndDate(startDateStr || form.data.start_date, term);
+        const due = calculateDueAmount(pkgId, termMonthsStr, couponIdStr);
+        setCalculatedDue(due);
 
         form.setData(data => ({
             ...data,
             package_id: pkgId,
             billing_term_months: termMonthsStr,
             end_date: newEndDate,
-            amount_paid: String(calculatedAmount),
             coupon_id: couponIdStr === '_none' ? '' : couponIdStr,
         }));
     }
@@ -115,12 +123,8 @@ export default function SubscriptionsIndex({ subscriptions, schools, packages, c
         const initialPkg = packages[0];
         const initialPkgId = initialPkg ? String(initialPkg.id) : '';
         const initialEnd = calculateEndDate(today, 3);
-        
-        let initialAmount = '0';
-        if (initialPkg) {
-            const p3 = initialPkg.prices?.find(pr => pr.term_months === 3);
-            initialAmount = p3 ? String(Math.round(parseFloat(p3.total_price))) : String(Math.round((parseFloat(initialPkg.price_monthly) || 0) * 3));
-        }
+        const due = calculateDueAmount(initialPkgId, '3', '');
+        setCalculatedDue(due);
 
         form.setData({
             school_id: '',
@@ -132,7 +136,7 @@ export default function SubscriptionsIndex({ subscriptions, schools, packages, c
             status: 'active',
             is_trial: false,
             trial_ends_at: '',
-            amount_paid: initialAmount,
+            amount_paid: '0',
             payment_method: '',
             notes: '',
         });
@@ -141,6 +145,10 @@ export default function SubscriptionsIndex({ subscriptions, schools, packages, c
     }
 
     function openEdit(s: Sub) {
+        form.clearErrors();
+        const due = parseFloat(s.billed_amount || s.amount_paid) || 0;
+        setCalculatedDue(due);
+
         form.setData({
             school_id: String(s.school.id),
             package_id: String(s.package.id),
@@ -155,7 +163,6 @@ export default function SubscriptionsIndex({ subscriptions, schools, packages, c
             payment_method: s.payment_method ?? '',
             notes: s.notes ?? '',
         });
-        form.clearErrors();
         setEditSub(s);
         setShowModal(true);
     }
@@ -371,6 +378,23 @@ export default function SubscriptionsIndex({ subscriptions, schools, packages, c
                             </div>
                         </div>
 
+                        {/* Calculated Commitment Due Banner */}
+                        <div className="p-3 bg-indigo-50/60 dark:bg-indigo-950/40 rounded-lg border border-indigo-100 dark:border-indigo-900/60 flex items-center justify-between">
+                            <div>
+                                <span className="text-xs font-bold text-slate-900 dark:text-white">
+                                    Commitment Total (Billed Amount):
+                                </span>
+                                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                                    Calculated from package term & coupon (server authoritative)
+                                </p>
+                            </div>
+                            <div className="text-right">
+                                <span className="text-base font-extrabold text-indigo-600 dark:text-indigo-400">
+                                    PKR {Number(calculatedDue).toLocaleString()}
+                                </span>
+                            </div>
+                        </div>
+
                         <div className="grid grid-cols-2 gap-4">
                             <div>
                                 <Label>Status *</Label>
@@ -382,13 +406,16 @@ export default function SubscriptionsIndex({ subscriptions, schools, packages, c
                                 </Select>
                             </div>
                             <div>
-                                <Label>Amount Paid (PKR) *</Label>
+                                <Label>Amount Paid Received (PKR) *</Label>
                                 <Input
                                     type="number"
                                     step="1"
+                                    min="0"
                                     value={form.data.amount_paid}
                                     onChange={e => form.setData('amount_paid', e.target.value)}
+                                    placeholder="0"
                                 />
+                                <p className="text-[11px] text-slate-400 mt-1">Enter 0 if unpaid, or actual amount received</p>
                             </div>
                         </div>
 

@@ -17,18 +17,21 @@
 </style>
 </head>
 <body>
+@php
+    $currencyCode = $school?->currency ?? 'PKR';
+@endphp
 <h2>{{ $school?->name ?? 'StudentXces' }} — Finance Report — Fee Payments</h2>
 <p>Period: {{ \Carbon\Carbon::parse($from)->format('d M Y') }} to {{ \Carbon\Carbon::parse($to)->format('d M Y') }}
-   &nbsp;|&nbsp; Total collected: {{ number_format($payments->sum('amount_paid'), 2) }}</p>
+   &nbsp;|&nbsp; Total collected: {{ $currencyCode }} {{ number_format($payments->sum('amount_paid'), 2) }}</p>
 <table>
     <thead>
         <tr>
             <th>#</th>
             <th>Student</th>
             <th>Admission No</th>
-            <th>Total Amount</th>
-            <th>Amount Paid</th>
-            <th>Balance</th>
+            <th>Total Amount ({{ $currencyCode }})</th>
+            <th>Amount Paid ({{ $currencyCode }})</th>
+            <th>Balance ({{ $currencyCode }})</th>
             <th>Status</th>
             <th>Paid At</th>
         </tr>
@@ -48,8 +51,8 @@
         @endforeach
         <tr class="total-row">
             <td colspan="4">Total</td>
-            <td>{{ number_format($payments->sum('amount_paid'), 2) }}</td>
-            <td>{{ number_format($payments->sum(fn($p) => $p->amount_due - $p->amount_paid), 2) }}</td>
+            <td>{{ $currencyCode }} {{ number_format($payments->sum('amount_paid'), 2) }}</td>
+            <td>{{ $currencyCode }} {{ number_format($payments->sum(fn($p) => $p->amount_due - $p->amount_paid), 2) }}</td>
             <td colspan="2"></td>
         </tr>
     </tbody>

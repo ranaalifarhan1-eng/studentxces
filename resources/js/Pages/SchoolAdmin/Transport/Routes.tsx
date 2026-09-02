@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Plus, Pencil, Trash2, Users, Bus, MapPin, X } from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
 import type { PageProps, PaginatedResponse } from '@/Types';
 
 interface VehicleOption { id: number; name: string | null; registration_no: string; capacity: number; }
@@ -28,16 +29,27 @@ const rDefault = { name: '', vehicle_id: '', start_point: '', end_point: '', mon
 
 export default function TransportRoutes({ routes, vehicles, filters }: Props) {
     const { flash } = usePage<PageProps>().props;
+    const { currency, format: formatMoney } = useCurrency();
     const [open, setOpen]     = useState(false);
     const [editing, setEditing] = useState<Route | null>(null);
     const [form, setForm]     = useState<Record<string, string>>(rDefault);
     const [stops, setStops]   = useState<Stop[]>([]);
     const [saving, setSaving] = useState(false);
 
+    function applyFilter(key: string, value: string) {
+        router.get('/school/transport/routes', { ...filters, [key]: value || undefined }, { preserveScroll: true });
+    }
+
     function openCreate() { setEditing(null); setForm(rDefault); setStops([]); setOpen(true); }
     function openEdit(r: Route) {
         setEditing(r);
-        setForm({ name: r.name, vehicle_id: r.vehicle?.id ? String(r.vehicle.id) : '', start_point: r.start_point ?? '', end_point: r.end_point ?? '', monthly_fee: r.monthly_fee, is_active: String(r.is_active) });
+        setForm({ 
+            name: r.name, 
+            vehicle_id: r.vehicle?.id ? String(r.vehicle.id) : '', 
+            start_point: r.start_point ?? '', 
+            end_point: r.end_point ?? '', 
+            monthly_fee: r.monthly_fee 
+        });
         setStops(r.stops ?? []);
         setOpen(true);
     }
@@ -50,9 +62,10 @@ export default function TransportRoutes({ routes, vehicles, filters }: Props) {
 
     function handleSave() {
         setSaving(true);
+        const payload = { ...form, stops };
         const url    = editing ? `/school/transport/routes/${editing.id}` : '/school/transport/routes';
         const method = editing ? 'put' : 'post';
-        router[method](url, { ...form, stops }, {
+        router[method](url, payload, {
             preserveScroll: true,
             onSuccess: () => { setOpen(false); setSaving(false); },
             onError:   () => setSaving(false),
@@ -70,11 +83,11 @@ export default function TransportRoutes({ routes, vehicles, filters }: Props) {
                 <div className="flex items-center justify-between">
                     <div>
                         <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Transport Routes</h1>
-                        <p className="text-sm text-slate-500 mt-0.5">{routes.meta?.total ?? 0} routes</p>
+                        <p className="text-sm text-slate-500 mt-0.5">{routes.meta?.total ?? 0} routes configured</p>
                     </div>
                     <div className="flex gap-2">
                         <Link href="/school/transport/vehicles">
-                            <Button variant="outline" className="inline-flex items-center gap-2"><Bus className="w-4 h-4" /> Fleet</Button>
+                            <Button variant="outline">Vehicles</Button>
                         </Link>
                         <Button onClick={openCreate} className="bg-indigo-600 hover:bg-indigo-700 text-white inline-flex items-center gap-2">
                             <Plus className="w-4 h-4" /> Add Route
@@ -86,17 +99,27 @@ export default function TransportRoutes({ routes, vehicles, filters }: Props) {
                     <div className="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700">{flash.success}</div>
                 )}
 
+                <div className="flex gap-3">
+                    <Select value={filters.vehicle_id ?? ''} onValueChange={v => applyFilter('vehicle_id', v)}>
+                        <SelectTrigger className="w-48"><SelectValue placeholder="All Vehicles" /></SelectTrigger>
+                        <SelectContent>
+                            <SelectItem value="">All Vehicles</SelectItem>
+                            {vehicles.map(v => <SelectItem key={v.id} value={String(v.id)}>{v.name ?? v.registration_no}</SelectItem>)}
+                        </SelectContent>
+                    </Select>
+                </div>
+
                 <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 overflow-x-auto">
                     <Table>
                         <TableHeader>
                             <TableRow className="bg-slate-50 dark:bg-slate-900">
-                                <TableHead>Route</TableHead>
+                                <TableHead>Route Name</TableHead>
                                 <TableHead>Vehicle</TableHead>
                                 <TableHead>Stops</TableHead>
                                 <TableHead className="text-right">Monthly Fee</TableHead>
                                 <TableHead className="text-center">Students</TableHead>
                                 <TableHead>Status</TableHead>
-                                <TableHead className="w-28"></TableHead>
+                                <TableHead className="w-24"></TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -114,7 +137,7 @@ export default function TransportRoutes({ routes, vehicles, filters }: Props) {
                                         {r.vehicle ? (r.vehicle.name ?? r.vehicle.registration_no) : '—'}
                                     </TableCell>
                                     <TableCell className="text-sm text-slate-500">{r.stops?.length ?? 0} stops</TableCell>
-                                    <TableCell className="text-right text-sm font-medium">৳{Number(r.monthly_fee).toLocaleString()}</TableCell>
+                                    <TableCell className="text-right text-sm font-medium">{formatMoney(r.monthly_fee)}</TableCell>
                                     <TableCell className="text-center">
                                         <Badge className="bg-indigo-100 text-indigo-700 border-0 text-xs">{r.students_count}</Badge>
                                     </TableCell>
@@ -172,7 +195,7 @@ export default function TransportRoutes({ routes, vehicles, filters }: Props) {
                             </div>
                         </div>
                         <div className="space-y-1.5">
-                            <Label>Monthly Fee (৳)</Label>
+                            <Label>Monthly Fee ({currency})</Label>
                             <Input type="number" min="0" value={form.monthly_fee} onChange={e => setForm(p => ({ ...p, monthly_fee: e.target.value }))} />
                         </div>
 

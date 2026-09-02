@@ -8,6 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ArrowLeft, Plus } from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
 import type { PageProps, PaginatedResponse } from '@/Types';
 
 interface ItemOption { id: number; name: string; unit: string; }
@@ -26,6 +27,7 @@ const empty = { item_id: '', vendor: '', purchase_date: new Date().toISOString()
 
 export default function InventoryPurchases({ purchases, items, filters }: Props) {
     const { flash } = usePage<PageProps>().props;
+    const { currency, format: formatMoney } = useCurrency();
     const [open, setOpen]   = useState(false);
     const [form, setForm]   = useState(empty);
     const [saving, setSaving] = useState(false);
@@ -43,24 +45,20 @@ export default function InventoryPurchases({ purchases, items, filters }: Props)
         });
     }
 
-    const total = (() => {
-        const q = Number(form.quantity) || 0;
-        const p = Number(form.unit_price) || 0;
-        return (q * p).toLocaleString('en', { minimumFractionDigits: 2 });
-    })();
+    const total = (Number(form.quantity || 0) * Number(form.unit_price || 0));
 
     return (
-        <AppLayout title="Inventory Purchases">
+        <AppLayout title="Purchase Records">
             <div className="space-y-6">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <Link href="/school/inventory/items" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 dark:hover:text-white">
-                            <ArrowLeft className="w-4 h-4" /> Items
+                        <Link href="/school/inventory/assets" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 dark:hover:text-white">
+                            <ArrowLeft className="w-4 h-4" /> Assets
                         </Link>
                         <span className="text-slate-300 dark:text-slate-700">|</span>
                         <div>
-                            <h1 className="text-xl font-bold text-slate-900 dark:text-white">Purchase History</h1>
-                            <p className="text-sm text-slate-500">{purchases.meta?.total ?? 0} records</p>
+                            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Purchases</h1>
+                            <p className="text-sm text-slate-500 mt-0.5">{purchases.meta?.total ?? 0} purchase entries</p>
                         </div>
                     </div>
                     <Button onClick={() => setOpen(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white inline-flex items-center gap-2">
@@ -75,7 +73,7 @@ export default function InventoryPurchases({ purchases, items, filters }: Props)
                 {/* Filter */}
                 <div className="flex gap-3">
                     <Select value={filters.item_id ?? ''} onValueChange={v => applyFilter('item_id', v)}>
-                        <SelectTrigger className="w-52"><SelectValue placeholder="All Items" /></SelectTrigger>
+                        <SelectTrigger className="w-48"><SelectValue placeholder="All Items" /></SelectTrigger>
                         <SelectContent>
                             <SelectItem value="">All Items</SelectItem>
                             {items.map(i => <SelectItem key={i.id} value={String(i.id)}>{i.name}</SelectItem>)}
@@ -109,8 +107,8 @@ export default function InventoryPurchases({ purchases, items, filters }: Props)
                                     <TableCell className="text-sm text-slate-500">{p.vendor ?? '—'}</TableCell>
                                     <TableCell className="text-sm text-slate-400 font-mono">{p.invoice_no ?? '—'}</TableCell>
                                     <TableCell className="text-right text-sm">{Number(p.quantity).toLocaleString()}</TableCell>
-                                    <TableCell className="text-right text-sm text-slate-500">৳{Number(p.unit_price).toLocaleString()}</TableCell>
-                                    <TableCell className="text-right font-semibold text-sm text-slate-900 dark:text-white">৳{Number(p.total_price).toLocaleString()}</TableCell>
+                                    <TableCell className="text-right text-sm text-slate-500">{formatMoney(p.unit_price)}</TableCell>
+                                    <TableCell className="text-right font-semibold text-sm text-slate-900 dark:text-white">{formatMoney(p.total_price)}</TableCell>
                                 </TableRow>
                             ))}
                         </TableBody>
@@ -147,14 +145,14 @@ export default function InventoryPurchases({ purchases, items, filters }: Props)
                                 <Input type="number" min="0.01" step="0.01" value={form.quantity} onChange={e => setForm(p => ({ ...p, quantity: e.target.value }))} />
                             </div>
                             <div className="space-y-1.5">
-                                <Label>Unit Price (৳) <span className="text-red-500">*</span></Label>
+                                <Label>Unit Price ({currency}) <span className="text-red-500">*</span></Label>
                                 <Input type="number" min="0" step="0.01" value={form.unit_price} onChange={e => setForm(p => ({ ...p, unit_price: e.target.value }))} />
                             </div>
                         </div>
                         {(form.quantity && form.unit_price) && (
                             <div className="rounded-lg bg-slate-50 dark:bg-slate-900 px-4 py-2 flex justify-between text-sm">
                                 <span className="text-slate-500">Total</span>
-                                <span className="font-bold text-slate-900 dark:text-white">৳{total}</span>
+                                <span className="font-bold text-slate-900 dark:text-white">{formatMoney(total)}</span>
                             </div>
                         )}
                         <div className="space-y-1.5">

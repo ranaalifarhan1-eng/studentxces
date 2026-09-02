@@ -3,11 +3,12 @@
     <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title inertia>{{ config('app.name', 'StudentXces') }}</title>
         @php
+            $platformName = \App\Models\PlatformSetting::get('platform_name') ?: 'StudentXces';
             $platformFavicon = \App\Models\PlatformSetting::get('platform_favicon');
             $faviconHref = $platformFavicon ? asset('storage/' . $platformFavicon) : asset('favicon.ico');
         @endphp
+        <title inertia>{{ $platformName }}</title>
         <link id="app-favicon" rel="icon" type="image/x-icon" href="{{ $faviconHref }}" />
         @viteReactRefresh
         @vite(['resources/css/app.css', 'resources/js/app.tsx'])

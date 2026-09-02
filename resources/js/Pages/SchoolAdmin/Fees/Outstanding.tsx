@@ -6,6 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent } from '@/components/ui/card';
 import { ArrowLeft, AlertCircle, Users, DollarSign } from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
 import type { SchoolClass } from '@/Types';
 
 interface OutstandingRow {
@@ -25,6 +26,8 @@ interface Props {
 }
 
 export default function OutstandingFees({ outstanding, classes, filters, summary }: Props) {
+    const { format: formatMoney } = useCurrency();
+
     function applyFilter(key: string, value: string) {
         router.get('/school/fees/outstanding', { ...filters, [key]: value || undefined }, { preserveScroll: true });
     }
@@ -38,15 +41,12 @@ export default function OutstandingFees({ outstanding, classes, filters, summary
                             <ArrowLeft className="w-4 h-4" /> Payments
                         </Link>
                         <span className="text-slate-300 dark:text-slate-700">|</span>
-                        <div>
-                            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Outstanding Fees</h1>
-                            <p className="text-sm text-slate-500">{summary.total_students} students with unpaid fees</p>
-                        </div>
+                        <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Outstanding Fees</h1>
                     </div>
                 </div>
 
                 {/* Summary Cards */}
-                <div className="grid grid-cols-2 gap-4 max-w-sm">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <Card className="border-slate-200 dark:border-slate-800">
                         <CardContent className="p-4 flex items-center gap-3">
                             <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-red-500"><Users className="w-5 h-5" /></div>
@@ -60,7 +60,7 @@ export default function OutstandingFees({ outstanding, classes, filters, summary
                         <CardContent className="p-4 flex items-center gap-3">
                             <div className="p-2 rounded-lg bg-slate-100 dark:bg-slate-800 text-red-500"><DollarSign className="w-5 h-5" /></div>
                             <div>
-                                <p className="text-xl font-bold text-red-600">৳{summary.total_outstanding?.toLocaleString()}</p>
+                                <p className="text-xl font-bold text-red-600">{formatMoney(summary.total_outstanding)}</p>
                                 <p className="text-xs text-slate-500">Total Due</p>
                             </div>
                         </CardContent>
@@ -111,9 +111,9 @@ export default function OutstandingFees({ outstanding, classes, filters, summary
                                         <TableCell className="text-center">
                                             <Badge className="bg-amber-100 text-amber-700 border-0 text-xs">{row.payment_count} item{row.payment_count !== 1 ? 's' : ''}</Badge>
                                         </TableCell>
-                                        <TableCell className="text-right text-sm text-slate-700 dark:text-slate-300">৳{row.total_due.toLocaleString()}</TableCell>
-                                        <TableCell className="text-right text-sm text-green-600">৳{row.total_paid.toLocaleString()}</TableCell>
-                                        <TableCell className="text-right font-bold text-red-600">৳{row.balance.toLocaleString()}</TableCell>
+                                        <TableCell className="text-right text-sm text-slate-700 dark:text-slate-300">{formatMoney(row.total_due)}</TableCell>
+                                        <TableCell className="text-right text-sm text-green-600">{formatMoney(row.total_paid)}</TableCell>
+                                        <TableCell className="text-right font-bold text-red-600">{formatMoney(row.balance)}</TableCell>
                                         <TableCell>
                                             <Link href={`/school/fees/payments/collect?student_id=${row.student.admission_no}`}>
                                                 <Button size="sm" className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white">Collect</Button>

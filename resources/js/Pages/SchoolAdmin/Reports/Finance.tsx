@@ -9,6 +9,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import { Download, Filter, TrendingUp, AlertCircle, DollarSign } from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
 
 interface Payment {
     id: number; amount_due: number; amount_paid: number; status: string; payment_date?: string;
@@ -31,8 +32,7 @@ const statusColor: Record<string, 'default' | 'secondary' | 'destructive'> = {
 export default function FinanceReport({ collected, outstanding, payroll, dailyChart, payments, filters }: Props) {
     const [fromDate, setFromDate] = useState(filters.from_date ?? '');
     const [toDate, setToDate]     = useState(filters.to_date ?? '');
-
-    const fmt = (n: number) => new Intl.NumberFormat(undefined, { minimumFractionDigits: 2 }).format(n);
+    const { format: formatMoney } = useCurrency();
 
     function applyFilter() {
         router.get('/school/reports/finance', { from_date: fromDate, to_date: toDate }, { preserveState: true });
@@ -78,7 +78,7 @@ export default function FinanceReport({ collected, outstanding, payroll, dailyCh
                             <div className="flex items-center justify-between">
                                 <div>
                                     <p className="text-sm text-slate-500">Collected (Period)</p>
-                                    <p className="text-2xl font-bold mt-1 text-green-600">${fmt(collected)}</p>
+                                    <p className="text-2xl font-bold mt-1 text-green-600">{formatMoney(collected, 2)}</p>
                                 </div>
                                 <div className="p-3 rounded-xl bg-green-500"><TrendingUp className="w-6 h-6 text-white" /></div>
                             </div>
@@ -89,7 +89,7 @@ export default function FinanceReport({ collected, outstanding, payroll, dailyCh
                             <div className="flex items-center justify-between">
                                 <div>
                                     <p className="text-sm text-slate-500">Outstanding</p>
-                                    <p className="text-2xl font-bold mt-1 text-orange-500">${fmt(outstanding)}</p>
+                                    <p className="text-2xl font-bold mt-1 text-orange-500">{formatMoney(outstanding, 2)}</p>
                                 </div>
                                 <div className="p-3 rounded-xl bg-orange-500"><AlertCircle className="w-6 h-6 text-white" /></div>
                             </div>
@@ -100,7 +100,7 @@ export default function FinanceReport({ collected, outstanding, payroll, dailyCh
                             <div className="flex items-center justify-between">
                                 <div>
                                     <p className="text-sm text-slate-500">Payroll (This Month)</p>
-                                    <p className="text-2xl font-bold mt-1">${fmt(payroll)}</p>
+                                    <p className="text-2xl font-bold mt-1">{formatMoney(payroll, 2)}</p>
                                 </div>
                                 <div className="p-3 rounded-xl bg-blue-500"><DollarSign className="w-6 h-6 text-white" /></div>
                             </div>
@@ -124,7 +124,7 @@ export default function FinanceReport({ collected, outstanding, payroll, dailyCh
                                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                                     <XAxis dataKey="day" tick={{ fontSize: 11 }} />
                                     <YAxis tick={{ fontSize: 11 }} />
-                                    <Tooltip formatter={(v: number) => [`$${fmt(v)}`, 'Collected']} />
+                                    <Tooltip formatter={(v: number) => [formatMoney(v, 2), 'Collected']} />
                                     <Area type="monotone" dataKey="amount" stroke="#6366f1" fill="url(#colorFee)" strokeWidth={2} isAnimationActive={false} />
                                 </AreaChart>
                             </ResponsiveContainer>
@@ -156,9 +156,9 @@ export default function FinanceReport({ collected, outstanding, payroll, dailyCh
                                     <TableRow key={p.id}>
                                         <TableCell>{p.student ? `${p.student.first_name} ${p.student.last_name}` : '—'}</TableCell>
                                         <TableCell>{p.student?.admission_no ?? '—'}</TableCell>
-                                        <TableCell>${fmt(p.amount_due)}</TableCell>
-                                        <TableCell className="text-green-600">${fmt(p.amount_paid)}</TableCell>
-                                        <TableCell className="text-orange-500">${fmt(p.amount_due - p.amount_paid)}</TableCell>
+                                        <TableCell>{formatMoney(p.amount_due, 2)}</TableCell>
+                                        <TableCell className="text-green-600">{formatMoney(p.amount_paid, 2)}</TableCell>
+                                        <TableCell className="text-orange-500">{formatMoney(p.amount_due - p.amount_paid, 2)}</TableCell>
                                         <TableCell><Badge variant={statusColor[p.status] ?? 'secondary'}>{p.status}</Badge></TableCell>
                                         <TableCell>{p.payment_date ? new Date(p.payment_date).toLocaleDateString() : '—'}</TableCell>
                                     </TableRow>

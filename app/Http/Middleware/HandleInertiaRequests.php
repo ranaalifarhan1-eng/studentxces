@@ -58,9 +58,21 @@ class HandleInertiaRequests extends Middleware
                     'name'     => $school->name,
                     'slug'     => $school->slug,
                     'status'   => $school->status,
+                    'currency' => $school->currency ?: 'PKR',
+                    'timezone' => $school->timezone ?: 'Asia/Karachi',
+                    'language' => $school->language ?: 'en',
                     'logo'     => $school->logo,
                     'logo_url' => $school->logo ? asset('storage/' . $school->logo) : null,
                 ] : null;
+            }),
+            'locale' => fn () => once(function () {
+                $context = app(ActiveSchoolContext::class);
+                $school = $context->getSelectedSchool();
+                return [
+                    'currency_code' => $school?->currency ?: 'PKR',
+                    'timezone'      => $school?->timezone ?: 'Asia/Karachi',
+                    'language'      => $school?->language ?: 'en',
+                ];
             }),
             'branding' => fn () => once(function () {
                 $context = app(ActiveSchoolContext::class);
@@ -73,6 +85,7 @@ class HandleInertiaRequests extends Middleware
                     'platform_logo_url' => $platformLogo ? asset('storage/' . $platformLogo) : null,
                     'app_name'          => $school ? $school->name : $platformName,
                     'tenant_name'       => $school?->name,
+                    'currency'          => $school?->currency ?: 'PKR',
                     'logo_url'          => $school?->logo ? asset('storage/' . $school->logo) : null,
                     'is_tenant_context' => (bool) $school,
                     'active_school_id'  => $school?->id,

@@ -132,9 +132,9 @@ export default function EditSchool() {
                         </CardHeader>
                         <CardContent className="grid grid-cols-3 gap-4">
                             {[
-                                { key: 'timezone', label: 'Timezone', opts: [['Asia/Dhaka','Asia/Dhaka (BST)'],['Asia/Kolkata','Asia/Kolkata (IST)'],['UTC','UTC'],['America/New_York','America/New_York'],['Europe/London','Europe/London']] },
-                                { key: 'currency', label: 'Currency', opts: [['BDT','BDT (৳)'],['USD','USD ($)'],['INR','INR (₹)'],['GBP','GBP (£)']] },
-                                { key: 'language', label: 'Language', opts: [['en','English'],['bn','Bengali']] },
+                                { key: 'timezone', label: 'Timezone', opts: [['Asia/Karachi','Asia/Karachi (PKT)'],['Asia/Dhaka','Asia/Dhaka (BST)'],['Asia/Kolkata','Asia/Kolkata (IST)'],['Asia/Dubai','Asia/Dubai (GST)'],['UTC','UTC'],['America/New_York','America/New_York'],['Europe/London','Europe/London']] },
+                                { key: 'currency', label: 'Currency', opts: [['PKR','PKR (Rs)'],['USD','USD ($)'],['EUR','EUR (€)'],['GBP','GBP (£)'],['INR','INR (₹)'],['BDT','BDT (৳)'],['AED','AED (AED)'],['SAR','SAR (SAR)']] },
+                                { key: 'language', label: 'Language', opts: [['en','English'],['bn','Bengali'],['ar','Arabic']] },
                             ].map(({ key, label, opts }) => (
                                 <div key={key} className="space-y-1.5">
                                     <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">{label}</Label>

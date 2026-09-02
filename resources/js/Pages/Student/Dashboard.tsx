@@ -7,6 +7,7 @@ import {
     Bell, Calendar, CheckCircle, XCircle, Clock, AlertTriangle,
     TrendingUp, User,
 } from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
 
 interface Student {
     id: number; full_name: string; admission_no: string;
@@ -64,6 +65,8 @@ function AttendanceCircle({ pct }: { pct: number }) {
 }
 
 export default function StudentDashboard({ linked, student, attendance, exams, homework, fees, marks, timetableToday, announcements }: Props) {
+    const { format: formatMoney } = useCurrency();
+
     if (!linked || !student) {
         return (
             <AppLayout title="My Dashboard">
@@ -125,9 +128,9 @@ export default function StudentDashboard({ linked, student, attendance, exams, h
                                 <p className="text-xs text-slate-500 uppercase tracking-wide">Fees</p>
                             </div>
                             <p className={cn('text-xl font-bold', fees.balance > 0 ? 'text-red-600' : 'text-green-600')}>
-                                {fees.balance > 0 ? `৳${fees.balance.toLocaleString()} due` : 'Paid up'}
+                                {fees.balance > 0 ? `${formatMoney(fees.balance)} due` : 'Paid up'}
                             </p>
-                            <p className="text-xs text-slate-400 mt-0.5">Paid: ৳{fees.total_paid.toLocaleString()}</p>
+                            <p className="text-xs text-slate-400 mt-0.5">Paid: {formatMoney(fees.total_paid)}</p>
                         </CardContent>
                     </Card>
 
@@ -258,8 +261,8 @@ export default function StudentDashboard({ linked, student, attendance, exams, h
                                                     {f.date && <p className="text-xs text-slate-400">Paid: {f.date}</p>}
                                                 </div>
                                                 <div className="text-right">
-                                                    <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">৳{f.paid.toLocaleString()}</p>
-                                                    {f.balance > 0 && <p className="text-xs text-red-500">৳{f.balance.toLocaleString()} due</p>}
+                                                    <p className="text-sm font-semibold text-slate-800 dark:text-slate-200">{formatMoney(f.paid)}</p>
+                                                    {f.balance > 0 && <p className="text-xs text-red-500">{formatMoney(f.balance)} due</p>}
                                                 </div>
                                                 <Badge variant={f.status === 'paid' ? 'default' : 'secondary'} className="ml-3">
                                                     {f.status}

@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Plus, Minus, ArrowLeft } from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
 import type { PageProps, PaginatedResponse } from '@/Types';
 
 interface SalaryItem { label: string; amount: number; }
@@ -28,9 +29,14 @@ interface Props {
 
 export default function SalaryStructurePage({ staffList, departments, filters }: Props) {
     const { flash } = usePage<PageProps>().props;
+    const { currency, format: formatMoney } = useCurrency();
     const [open, setOpen] = useState(false);
     const [editStaff, setEditStaff] = useState<StaffRow | null>(null);
-    const [form, setForm] = useState({ basic_salary: '', allowances: [] as SalaryItem[], deductions: [] as SalaryItem[] });
+    const [form, setForm] = useState({
+        basic_salary: '',
+        allowances: [] as { label: string; amount: string }[],
+        deductions: [] as { label: string; amount: string }[],
+    });
     const [saving, setSaving] = useState(false);
 
     function applyFilter(key: string, value: string) {
@@ -39,43 +45,43 @@ export default function SalaryStructurePage({ staffList, departments, filters }:
 
     function openEdit(s: StaffRow) {
         setEditStaff(s);
+        const struct = s.salary_structure;
         setForm({
-            basic_salary: s.salary_structure?.basic_salary ?? '',
-            allowances: s.salary_structure?.allowances ?? [],
-            deductions: s.salary_structure?.deductions ?? [],
+            basic_salary: struct?.basic_salary ? String(struct.basic_salary) : '',
+            allowances: (struct?.allowances ?? []).map(a => ({ label: a.label, amount: String(a.amount) })),
+            deductions: (struct?.deductions ?? []).map(d => ({ label: d.label, amount: String(d.amount) })),
         });
         setOpen(true);
     }
 
     function addItem(type: 'allowances' | 'deductions') {
-        setForm(prev => ({ ...prev, [type]: [...prev[type], { label: '', amount: 0 }] }));
+        setForm(p => ({ ...p, [type]: [...p[type], { label: '', amount: '' }] }));
     }
     function removeItem(type: 'allowances' | 'deductions', idx: number) {
-        setForm(prev => ({ ...prev, [type]: prev[type].filter((_, i) => i !== idx) }));
+        setForm(p => ({ ...p, [type]: p[type].filter((_, i) => i !== idx) }));
     }
-    function updateItem(type: 'allowances' | 'deductions', idx: number, field: 'label' | 'amount', value: string) {
-        setForm(prev => ({
-            ...prev,
-            [type]: prev[type].map((item, i) => i === idx ? { ...item, [field]: field === 'amount' ? Number(value) : value } : item),
-        }));
+    function updateItem(type: 'allowances' | 'deductions', idx: number, key: 'label' | 'amount', val: string) {
+        setForm(p => ({ ...p, [type]: p[type].map((item, i) => i === idx ? { ...item, [key]: val } : item) }));
     }
-
-    const grossSalary = Number(form.basic_salary || 0) + form.allowances.reduce((s, a) => s + Number(a.amount || 0), 0);
-    const totalDeductions = form.deductions.reduce((s, d) => s + Number(d.amount || 0), 0);
-    const netSalary = grossSalary - totalDeductions;
 
     function handleSave() {
         if (!editStaff) return;
         setSaving(true);
-        router.put(`/school/hr/salary-structure/${editStaff.id}`, form, {
-            preserveScroll: true,
-            onSuccess: () => { setOpen(false); setSaving(false); },
-            onError: () => setSaving(false),
+        router.put(`/school/hr/salary-structure/${editStaff.id}`, {
+            basic_salary: form.basic_salary,
+            allowances:   form.allowances.filter(a => a.label && a.amount).map(a => ({ label: a.label, amount: Number(a.amount) })),
+            deductions:   form.deductions.filter(d => d.label && d.amount).map(d => ({ label: d.label, amount: Number(d.amount) })),
+        }, {
+            onFinish: () => { setSaving(false); setOpen(false); },
         });
     }
 
+    const grossSalary     = Number(form.basic_salary || 0) + form.allowances.reduce((s, a) => s + Number(a.amount || 0), 0);
+    const totalDeductions = form.deductions.reduce((s, d) => s + Number(d.amount || 0), 0);
+    const netSalary       = Math.max(0, grossSalary - totalDeductions);
+
     return (
-        <AppLayout title="Salary Structure">
+        <AppLayout title="Salary Structures">
             <div className="space-y-6">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -84,8 +90,8 @@ export default function SalaryStructurePage({ staffList, departments, filters }:
                         </Link>
                         <span className="text-slate-300 dark:text-slate-700">|</span>
                         <div>
-                            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Salary Structure</h1>
-                            <p className="text-sm text-slate-500">Configure salary components per staff</p>
+                            <h1 className="text-2xl font-bold text-slate-900 dark:white">Salary Structures</h1>
+                            <p className="text-sm text-slate-500 mt-0.5">Configure individual staff salary breakdowns</p>
                         </div>
                     </div>
                 </div>
@@ -96,7 +102,7 @@ export default function SalaryStructurePage({ staffList, departments, filters }:
 
                 <div className="flex gap-3">
                     <Select value={filters.department_id ?? ''} onValueChange={v => applyFilter('department_id', v)}>
-                        <SelectTrigger className="w-44"><SelectValue placeholder="All Departments" /></SelectTrigger>
+                        <SelectTrigger className="w-48"><SelectValue placeholder="All Departments" /></SelectTrigger>
                         <SelectContent>
                             <SelectItem value="">All Departments</SelectItem>
                             {departments.map(d => <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>)}
@@ -109,19 +115,21 @@ export default function SalaryStructurePage({ staffList, departments, filters }:
                         <TableHeader>
                             <TableRow className="bg-slate-50 dark:bg-slate-900">
                                 <TableHead>Staff</TableHead>
-                                <TableHead>Department · Designation</TableHead>
+                                <TableHead>Department / Role</TableHead>
                                 <TableHead className="text-right">Basic</TableHead>
                                 <TableHead className="text-right">Allowances</TableHead>
                                 <TableHead className="text-right">Deductions</TableHead>
                                 <TableHead className="text-right">Net Salary</TableHead>
-                                <TableHead className="w-20"></TableHead>
+                                <TableHead className="w-16"></TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {staffList.data.map(s => {
-                                const struct = s.salary_structure;
-                                const allowTotal = struct?.allowances?.reduce((sum, a) => sum + Number(a.amount), 0) ?? 0;
-                                const dedTotal   = struct?.deductions?.reduce((sum, d) => sum + Number(d.amount), 0) ?? 0;
+                            {staffList.data.length === 0 ? (
+                                <TableRow><TableCell colSpan={7} className="text-center py-16 text-slate-400">No staff records found.</TableCell></TableRow>
+                            ) : staffList.data.map(s => {
+                                const struct     = s.salary_structure;
+                                const allowTotal = (struct?.allowances ?? []).reduce((sum, a) => sum + Number(a.amount), 0);
+                                const dedTotal   = (struct?.deductions ?? []).reduce((sum, d) => sum + Number(d.amount), 0);
                                 const netSal     = struct ? Number(struct.basic_salary) + allowTotal - dedTotal : null;
                                 return (
                                     <TableRow key={s.id}>
@@ -130,10 +138,10 @@ export default function SalaryStructurePage({ staffList, departments, filters }:
                                             <p className="text-xs text-slate-400">{s.emp_id}</p>
                                         </TableCell>
                                         <TableCell className="text-slate-500 text-sm">{s.department?.name} · {s.designation?.name}</TableCell>
-                                        <TableCell className="text-right text-sm">{struct ? `৳${Number(struct.basic_salary).toLocaleString()}` : '—'}</TableCell>
-                                        <TableCell className="text-right text-sm text-green-600">{struct ? `৳${allowTotal.toLocaleString()}` : '—'}</TableCell>
-                                        <TableCell className="text-right text-sm text-red-600">{struct ? `৳${dedTotal.toLocaleString()}` : '—'}</TableCell>
-                                        <TableCell className="text-right font-bold text-indigo-600">{netSal != null ? `৳${netSal.toLocaleString()}` : <Badge className="bg-amber-100 text-amber-700 border-0 text-xs">Not Set</Badge>}</TableCell>
+                                        <TableCell className="text-right text-sm">{struct ? formatMoney(struct.basic_salary) : '—'}</TableCell>
+                                        <TableCell className="text-right text-sm text-green-600">{struct ? formatMoney(allowTotal) : '—'}</TableCell>
+                                        <TableCell className="text-right text-sm text-red-600">{struct ? formatMoney(dedTotal) : '—'}</TableCell>
+                                        <TableCell className="text-right font-bold text-indigo-600">{netSal != null ? formatMoney(netSal) : <Badge className="bg-amber-100 text-amber-700 border-0 text-xs">Not Set</Badge>}</TableCell>
                                         <TableCell>
                                             <Button size="sm" variant="outline" className="text-xs" onClick={() => openEdit(s)}>Edit</Button>
                                         </TableCell>
@@ -152,7 +160,7 @@ export default function SalaryStructurePage({ staffList, departments, filters }:
                     </DialogHeader>
                     <div className="space-y-5 mt-2">
                         <div className="space-y-1.5">
-                            <Label>Basic Salary (৳) <span className="text-red-500">*</span></Label>
+                            <Label>Basic Salary ({currency}) <span className="text-red-500">*</span></Label>
                             <Input type="number" min="0" step="0.01" value={form.basic_salary} onChange={e => setForm(p => ({ ...p, basic_salary: e.target.value }))} />
                         </div>
 
@@ -192,10 +200,10 @@ export default function SalaryStructurePage({ staffList, departments, filters }:
 
                         {/* Summary */}
                         <div className="rounded-lg bg-slate-50 dark:bg-slate-900 p-3 space-y-1 text-sm">
-                            <div className="flex justify-between"><span className="text-slate-500">Gross Salary</span><span className="font-medium">৳{grossSalary.toLocaleString()}</span></div>
-                            <div className="flex justify-between text-red-600"><span>Total Deductions</span><span>- ৳{totalDeductions.toLocaleString()}</span></div>
+                            <div className="flex justify-between"><span className="text-slate-500">Gross Salary</span><span className="font-medium">{formatMoney(grossSalary)}</span></div>
+                            <div className="flex justify-between text-red-600"><span>Total Deductions</span><span>- {formatMoney(totalDeductions)}</span></div>
                             <div className="flex justify-between font-bold text-base border-t border-slate-200 dark:border-slate-700 pt-1 mt-1">
-                                <span>Net Salary</span><span className="text-indigo-600">৳{netSalary.toLocaleString()}</span>
+                                <span>Net Salary</span><span className="text-indigo-600">{formatMoney(netSalary)}</span>
                             </div>
                         </div>
                     </div>

@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ArrowLeft, Plus, RotateCcw } from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
 import type { PageProps, PaginatedResponse } from '@/Types';
 
 interface BookOption { id: number; title: string; author: string; available_copies: number; isbn: string | null; }
@@ -35,27 +36,36 @@ const STATUS_STYLE: Record<string, string> = {
     overdue:  'bg-red-100 text-red-700',
 };
 
-const issueDefault = { book_id: '', member_type: 'student', member_id: '', issued_date: new Date().toISOString().split('T')[0], due_date: '', fine_per_day: '2', note: '' };
-
 export default function LibraryIssues({ issues, books, students, staffList, filters }: Props) {
     const { flash } = usePage<PageProps>().props;
-    const [issueOpen, setIssueOpen] = useState(false);
+    const { currency, format: formatMoney } = useCurrency();
+    const [issueOpen, setIssueOpen]   = useState(false);
     const [returnOpen, setReturnOpen] = useState<Issue | null>(null);
-    const [issueForm, setIssueForm] = useState(issueDefault);
     const [returnDate, setReturnDate] = useState(new Date().toISOString().split('T')[0]);
-    const [saving, setSaving] = useState(false);
+    const [saving, setSaving]         = useState(false);
+
+    const defaultDue = new Date();
+    defaultDue.setDate(defaultDue.getDate() + 14);
+
+    const [issueForm, setIssueForm] = useState({
+        book_id:       books[0] ? String(books[0].id) : '',
+        member_type:   'student',
+        member_id:     '',
+        issued_date:   new Date().toISOString().split('T')[0],
+        due_date:      defaultDue.toISOString().split('T')[0],
+        fine_per_day:  '0',
+        note:          '',
+    });
 
     function applyFilter(key: string, value: string) {
         router.get('/school/library/issues', { ...filters, [key]: value || undefined }, { preserveScroll: true });
     }
 
-    const memberOptions = issueForm.member_type === 'student' ? students : staffList;
-
     function handleIssue() {
         setSaving(true);
         router.post('/school/library/issues', issueForm, {
             preserveScroll: true,
-            onSuccess: () => { setIssueOpen(false); setIssueForm(issueDefault); setSaving(false); },
+            onSuccess: () => { setIssueOpen(false); setSaving(false); },
             onError: () => setSaving(false),
         });
     }
@@ -63,30 +73,37 @@ export default function LibraryIssues({ issues, books, students, staffList, filt
     function handleReturn() {
         if (!returnOpen) return;
         setSaving(true);
-        router.put(`/school/library/issues/${returnOpen.id}/return`, { returned_date: returnDate }, {
+        router.post(`/school/library/issues/${returnOpen.id}/return`, { returned_date: returnDate }, {
             preserveScroll: true,
             onSuccess: () => { setReturnOpen(null); setSaving(false); },
             onError: () => setSaving(false),
         });
     }
 
+    const memberOptions = issueForm.member_type === 'student' ? students : staffList;
+
     return (
-        <AppLayout title="Library — Issue / Return">
+        <AppLayout title="Book Circulation">
             <div className="space-y-6">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
-                        <Link href="/school/library/books" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 dark:hover:text-white">
+                        <Link href="/school/library" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 dark:hover:text-white">
                             <ArrowLeft className="w-4 h-4" /> Books
                         </Link>
                         <span className="text-slate-300 dark:text-slate-700">|</span>
                         <div>
-                            <h1 className="text-xl font-bold text-slate-900 dark:text-white">Issue / Return</h1>
-                            <p className="text-sm text-slate-500">{issues.meta?.total ?? 0} records</p>
+                            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Circulation</h1>
+                            <p className="text-sm text-slate-500 mt-0.5">{issues.meta?.total ?? 0} circulation records</p>
                         </div>
                     </div>
-                    <Button onClick={() => setIssueOpen(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white inline-flex items-center gap-2">
-                        <Plus className="w-4 h-4" /> Issue Book
-                    </Button>
+                    <div className="flex gap-2">
+                        <Link href="/school/library/overdue">
+                            <Button variant="outline" className="text-red-600 border-red-200 hover:bg-red-50">Overdue Books</Button>
+                        </Link>
+                        <Button onClick={() => setIssueOpen(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white inline-flex items-center gap-2">
+                            <Plus className="w-4 h-4" /> Issue Book
+                        </Button>
+                    </div>
                 </div>
 
                 {flash?.success && (
@@ -98,7 +115,7 @@ export default function LibraryIssues({ issues, books, students, staffList, filt
                     <Select value={filters.status ?? ''} onValueChange={v => applyFilter('status', v)}>
                         <SelectTrigger className="w-36"><SelectValue placeholder="All Status" /></SelectTrigger>
                         <SelectContent>
-                            <SelectItem value="">All</SelectItem>
+                            <SelectItem value="">All Status</SelectItem>
                             <SelectItem value="issued">Issued</SelectItem>
                             <SelectItem value="returned">Returned</SelectItem>
                             <SelectItem value="overdue">Overdue</SelectItem>
@@ -107,7 +124,7 @@ export default function LibraryIssues({ issues, books, students, staffList, filt
                     <Select value={filters.member_type ?? ''} onValueChange={v => applyFilter('member_type', v)}>
                         <SelectTrigger className="w-36"><SelectValue placeholder="All Members" /></SelectTrigger>
                         <SelectContent>
-                            <SelectItem value="">All</SelectItem>
+                            <SelectItem value="">All Members</SelectItem>
                             <SelectItem value="student">Students</SelectItem>
                             <SelectItem value="staff">Staff</SelectItem>
                         </SelectContent>
@@ -126,31 +143,30 @@ export default function LibraryIssues({ issues, books, students, staffList, filt
                                 <TableHead>Returned</TableHead>
                                 <TableHead className="text-right">Fine</TableHead>
                                 <TableHead>Status</TableHead>
-                                <TableHead className="w-24"></TableHead>
+                                <TableHead className="w-20"></TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
                             {issues.data.length === 0 ? (
-                                <TableRow><TableCell colSpan={8} className="text-center py-16 text-slate-400">No issue records found.</TableCell></TableRow>
+                                <TableRow><TableCell colSpan={8} className="text-center py-16 text-slate-400">No circulation records found.</TableCell></TableRow>
                             ) : issues.data.map(iss => (
-                                <TableRow key={iss.id} className={iss.status === 'overdue' ? 'bg-red-50/30 dark:bg-red-950/10' : ''}>
+                                <TableRow key={iss.id}>
                                     <TableCell>
                                         <p className="font-medium text-sm text-slate-900 dark:text-white">{iss.book?.title}</p>
                                         <p className="text-xs text-slate-400">{iss.book?.author}</p>
                                     </TableCell>
                                     <TableCell>
-                                        <p className="text-sm text-slate-700 dark:text-slate-300">{iss.member_name}</p>
-                                        <p className="text-xs text-slate-400">{iss.member_type_label} · {iss.member_id_no}</p>
+                                        <p className="text-sm font-medium text-slate-900 dark:text-white">{iss.member_name}</p>
+                                        <p className="text-xs text-slate-400 capitalize">{iss.member_type} · {iss.member_id_no}</p>
                                     </TableCell>
                                     <TableCell className="text-sm text-slate-500">{new Date(iss.issued_date).toLocaleDateString()}</TableCell>
                                     <TableCell className={`text-sm ${iss.status === 'overdue' ? 'text-red-600 font-medium' : 'text-slate-500'}`}>
-                                        {new Date(iss.due_date).toLocaleDateString()}
-                                    </TableCell>
+                                        {new Date(iss.due_date).toLocaleDateString()}</TableCell>
                                     <TableCell className="text-sm text-slate-500">
                                         {iss.returned_date ? new Date(iss.returned_date).toLocaleDateString() : '—'}
                                     </TableCell>
                                     <TableCell className={`text-right text-sm ${Number(iss.fine) > 0 ? 'text-red-600 font-medium' : 'text-slate-400'}`}>
-                                        {Number(iss.fine) > 0 ? `৳${Number(iss.fine).toLocaleString()}` : '—'}
+                                        {Number(iss.fine) > 0 ? formatMoney(iss.fine) : '—'}
                                     </TableCell>
                                     <TableCell>
                                         <Badge className={`border-0 text-xs capitalize ${STATUS_STYLE[iss.status] ?? ''}`}>{iss.status}</Badge>
@@ -224,7 +240,7 @@ export default function LibraryIssues({ issues, books, students, staffList, filt
                             </div>
                         </div>
                         <div className="space-y-1.5">
-                            <Label>Fine Per Day (৳)</Label>
+                            <Label>Fine Per Day ({currency})</Label>
                             <Input type="number" min="0" step="0.5" value={issueForm.fine_per_day} onChange={e => setIssueForm(p => ({ ...p, fine_per_day: e.target.value }))} />
                         </div>
                         <div className="space-y-1.5">
@@ -249,7 +265,7 @@ export default function LibraryIssues({ issues, books, students, staffList, filt
                         <div className="rounded-lg bg-slate-50 dark:bg-slate-900 p-3 text-sm space-y-1">
                             <p className="font-medium">{returnOpen?.book?.title}</p>
                             <p className="text-slate-500">Due: {returnOpen?.due_date ? new Date(returnOpen.due_date).toLocaleDateString() : '—'}</p>
-                            <p className="text-slate-500">Fine rate: ৳{returnOpen?.fine} / day</p>
+                            <p className="text-slate-500">Fine rate: {formatMoney(returnOpen?.fine ?? 0)} / day</p>
                         </div>
                         <div className="space-y-1.5">
                             <Label>Return Date <span className="text-red-500">*</span></Label>

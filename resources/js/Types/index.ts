@@ -45,6 +45,7 @@ export interface BrandingProps {
     platform_logo_url: string | null;
     app_name: string;
     tenant_name: string | null;
+    currency?: string;
     logo_url: string | null;
     is_tenant_context: boolean;
     active_school_id: number | null;
@@ -59,10 +60,18 @@ export interface PageProps {
         name: string;
         slug: string;
         status: string;
+        currency?: string;
+        timezone?: string;
+        language?: string;
         logo?: string | null;
         logo_url?: string | null;
     } | null;
     branding?: BrandingProps;
+    locale?: {
+        currency_code: string;
+        timezone: string;
+        language: string;
+    };
     school: School | null;
     flash: {
         success?: string;

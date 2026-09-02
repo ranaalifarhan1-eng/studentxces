@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ArrowLeft, Plus, Pencil, Trash2 } from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
 import type { PageProps } from '@/Types';
 
 interface Hostel { id: number; name: string; type: string; total_rooms: number; total_capacity: number; }
@@ -29,6 +30,7 @@ const rDefault = { room_no: '', floor: '', type: 'double', capacity: '2', ac: 'f
 
 export default function HostelRooms({ hostel, rooms }: Props) {
     const { flash } = usePage<PageProps>().props;
+    const { currency, format: formatMoney } = useCurrency();
     const [open, setOpen]     = useState(false);
     const [editing, setEditing] = useState<Room | null>(null);
     const [form, setForm]     = useState<Record<string, string>>(rDefault);
@@ -43,7 +45,7 @@ export default function HostelRooms({ hostel, rooms }: Props) {
 
     function handleSave() {
         setSaving(true);
-        const url    = editing ? `/school/hostel/${hostel.id}/rooms/${editing.id}` : `/school/hostel/${hostel.id}/rooms`;
+        const url    = editing ? `/school/hostel/rooms/${editing.id}` : `/school/hostel/${hostel.id}/rooms`;
         const method = editing ? 'put' : 'post';
         router[method](url, form, {
             preserveScroll: true,
@@ -52,13 +54,13 @@ export default function HostelRooms({ hostel, rooms }: Props) {
         });
     }
 
-    function handleDelete(roomId: number) {
+    function handleDelete(id: number) {
         if (!confirm('Delete this room?')) return;
-        router.delete(`/school/hostel/${hostel.id}/rooms/${roomId}`, { preserveScroll: true });
+        router.delete(`/school/hostel/rooms/${id}`, { preserveScroll: true });
     }
 
     return (
-        <AppLayout title={`Rooms — ${hostel.name}`}>
+        <AppLayout title={`${hostel.name} — Rooms`}>
             <div className="space-y-6">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
@@ -67,13 +69,18 @@ export default function HostelRooms({ hostel, rooms }: Props) {
                         </Link>
                         <span className="text-slate-300 dark:text-slate-700">|</span>
                         <div>
-                            <h1 className="text-xl font-bold text-slate-900 dark:text-white">{hostel.name}</h1>
-                            <p className="text-sm text-slate-500">{rooms.length} rooms · {hostel.total_capacity} total beds</p>
+                            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">{hostel.name}</h1>
+                            <p className="text-sm text-slate-500 mt-0.5 capitalize">{hostel.type} hostel · {rooms.length} rooms</p>
                         </div>
                     </div>
-                    <Button onClick={openCreate} className="bg-indigo-600 hover:bg-indigo-700 text-white inline-flex items-center gap-2">
-                        <Plus className="w-4 h-4" /> Add Room
-                    </Button>
+                    <div className="flex gap-2">
+                        <Link href={`/school/hostel/${hostel.id}/allocations`}>
+                            <Button variant="outline">Allocations</Button>
+                        </Link>
+                        <Button onClick={openCreate} className="bg-indigo-600 hover:bg-indigo-700 text-white inline-flex items-center gap-2">
+                            <Plus className="w-4 h-4" /> Add Room
+                        </Button>
+                    </div>
                 </div>
 
                 {flash?.success && (
@@ -90,7 +97,7 @@ export default function HostelRooms({ hostel, rooms }: Props) {
                                 <TableHead className="text-center">Capacity</TableHead>
                                 <TableHead className="text-center">Occupied</TableHead>
                                 <TableHead>AC</TableHead>
-                                <TableHead className="text-right">Fee/month</TableHead>
+                                <TableHead className="text-right">Monthly Fee</TableHead>
                                 <TableHead>Status</TableHead>
                                 <TableHead className="w-20"></TableHead>
                             </TableRow>
@@ -106,7 +113,7 @@ export default function HostelRooms({ hostel, rooms }: Props) {
                                     <TableCell className="text-center text-sm">{r.capacity}</TableCell>
                                     <TableCell className="text-center text-sm font-medium text-indigo-600">{r.occupied}</TableCell>
                                     <TableCell className="text-sm">{r.ac ? '✓' : '—'}</TableCell>
-                                    <TableCell className="text-right text-sm">৳{Number(r.monthly_fee).toLocaleString()}</TableCell>
+                                    <TableCell className="text-right text-sm">{formatMoney(r.monthly_fee)}</TableCell>
                                     <TableCell>
                                         <Badge className={`border-0 text-xs capitalize ${STATUS_STYLE[r.status] ?? ''}`}>{r.status}</Badge>
                                     </TableCell>
@@ -156,7 +163,7 @@ export default function HostelRooms({ hostel, rooms }: Props) {
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-1.5">
-                                <Label>Monthly Fee (৳)</Label>
+                                <Label>Monthly Fee ({currency})</Label>
                                 <Input type="number" min="0" value={form.monthly_fee} onChange={e => setForm(p => ({ ...p, monthly_fee: e.target.value }))} />
                             </div>
                             <div className="space-y-1.5">

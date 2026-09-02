@@ -1,32 +1,42 @@
-import { router, usePage, Link } from '@inertiajs/react';
+import { router, Link } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent } from '@/components/ui/card';
-import { Plus, DollarSign, CheckCircle2, Clock, AlertCircle, Settings2, Tag, TrendingDown } from 'lucide-react';
-import type { SchoolClass, PageProps, PaginatedResponse } from '@/Types';
+import {
+    Plus, AlertCircle, Settings2, Tag, DollarSign, TrendingDown,
+    CheckCircle2, Clock,
+} from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
+import type { SchoolClass } from '@/Types';
 
-interface FeePayment {
-    id: number; receipt_no: string; amount_due: string; amount_paid: string; discount: string; fine: string;
-    payment_date: string | null; month_year: string | null; method: string; status: string;
+interface Payment {
+    id: number;
+    amount_due: string;
+    amount_paid: string;
+    discount: string;
+    fine: string;
+    status: 'paid' | 'partial' | 'unpaid' | 'overdue';
+    method: string;
+    payment_date: string | null;
+    month_year: string | null;
     student?: { id: number; first_name: string; last_name: string | null; admission_no: string; school_class?: { name: string } };
-    fee_structure?: { academic_year: string; frequency: string; fee_category?: { name: string; type: string } };
+    fee_structure?: { id: number; academic_year: string; fee_category?: { name: string } };
 }
-interface Stats { total_collected: number; total_outstanding: number; paid_count: number; pending_count: number; }
 
 interface Props {
-    payments: PaginatedResponse<FeePayment>;
+    payments: { data: Payment[]; meta?: { total: number; current_page: number; last_page: number } };
     classes: SchoolClass[];
-    filters: { student_id?: string; status?: string; class_id?: string; month_year?: string };
-    stats: Stats;
+    filters: { class_id?: string; status?: string; search?: string };
+    stats: { total_collected: number; total_outstanding: number; paid_count: number; pending_count: number };
 }
 
 const STATUS_STYLE: Record<string, string> = {
-    paid:    'bg-green-100 text-green-700',
+    paid: 'bg-green-100 text-green-700',
     partial: 'bg-amber-100 text-amber-700',
-    pending: 'bg-slate-100 text-slate-600',
+    unpaid: 'bg-red-100 text-red-700',
     overdue: 'bg-red-100 text-red-700',
 };
 const METHOD_LABELS: Record<string, string> = {
@@ -34,13 +44,15 @@ const METHOD_LABELS: Record<string, string> = {
 };
 
 export default function FeePayments({ payments, classes, filters, stats }: Props) {
+    const { format: formatMoney } = useCurrency();
+
     function applyFilter(key: string, value: string) {
         router.get('/school/fees/payments', { ...filters, [key]: value || undefined }, { preserveScroll: true });
     }
 
     const statCards = [
-        { label: 'Total Collected', value: `৳${stats.total_collected?.toLocaleString() ?? 0}`, color: 'text-green-600', icon: DollarSign },
-        { label: 'Outstanding', value: `৳${Math.max(0, stats.total_outstanding ?? 0).toLocaleString()}`, color: 'text-red-600', icon: TrendingDown },
+        { label: 'Total Collected', value: formatMoney(stats.total_collected ?? 0), color: 'text-green-600', icon: DollarSign },
+        { label: 'Outstanding', value: formatMoney(Math.max(0, stats.total_outstanding ?? 0)), color: 'text-red-600', icon: TrendingDown },
         { label: 'Paid Receipts', value: stats.paid_count, color: 'text-indigo-600', icon: CheckCircle2 },
         { label: 'Pending', value: stats.pending_count, color: 'text-amber-600', icon: Clock },
     ];
@@ -71,16 +83,16 @@ export default function FeePayments({ payments, classes, filters, stats }: Props
                     </div>
                 </div>
 
-                {/* Stats */}
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    {statCards.map(({ label, value, color, icon: Icon }) => (
-                        <Card key={label} className="border-slate-200 dark:border-slate-800">
-                            <CardContent className="p-4 flex items-center gap-3">
-                                <div className={`p-2 rounded-lg bg-slate-100 dark:bg-slate-800 ${color}`}><Icon className="w-5 h-5" /></div>
+                {/* Stat Cards */}
+                <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+                    {statCards.map((sc, i) => (
+                        <Card key={i} className="border-slate-200 dark:border-slate-800">
+                            <CardContent className="p-4 flex items-center justify-between">
                                 <div>
-                                    <p className={`text-xl font-bold ${color}`}>{value}</p>
-                                    <p className="text-xs text-slate-500">{label}</p>
+                                    <p className="text-xs text-slate-500 dark:text-slate-400">{sc.label}</p>
+                                    <p className={`text-xl font-bold mt-1 ${sc.color}`}>{sc.value}</p>
                                 </div>
+                                <sc.icon className={`w-8 h-8 opacity-20 ${sc.color}`} />
                             </CardContent>
                         </Card>
                     ))}
@@ -101,37 +113,36 @@ export default function FeePayments({ payments, classes, filters, stats }: Props
                             <SelectItem value="">All Status</SelectItem>
                             <SelectItem value="paid">Paid</SelectItem>
                             <SelectItem value="partial">Partial</SelectItem>
-                            <SelectItem value="pending">Pending</SelectItem>
+                            <SelectItem value="unpaid">Unpaid</SelectItem>
                             <SelectItem value="overdue">Overdue</SelectItem>
                         </SelectContent>
                     </Select>
                 </div>
 
-                {/* Table */}
+                {/* Payments Table */}
                 <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 overflow-x-auto">
                     <Table>
                         <TableHeader>
                             <TableRow className="bg-slate-50 dark:bg-slate-900">
-                                <TableHead>Receipt</TableHead>
+                                <TableHead>#</TableHead>
                                 <TableHead>Student</TableHead>
-                                <TableHead>Fee</TableHead>
-                                <TableHead className="text-right">Amount Due</TableHead>
+                                <TableHead>Fee Type</TableHead>
+                                <TableHead className="text-right">Due</TableHead>
                                 <TableHead className="text-right">Paid</TableHead>
                                 <TableHead className="text-right">Balance</TableHead>
                                 <TableHead>Method</TableHead>
                                 <TableHead>Date</TableHead>
                                 <TableHead>Status</TableHead>
-                                <TableHead className="w-16"></TableHead>
+                                <TableHead className="w-20"></TableHead>
                             </TableRow>
                         </TableHeader>
                         <TableBody>
-                            {payments.data.length === 0 ? (
-                                <TableRow><TableCell colSpan={10} className="text-center py-16 text-slate-400">No payments recorded yet.</TableCell></TableRow>
-                            ) : payments.data.map(p => {
-                                const balance = (Number(p.amount_due) + Number(p.fine) - Number(p.discount) - Number(p.amount_paid)).toFixed(2);
+                            {payments.data.map((p, idx) => {
+                                const netDue = Number(p.amount_due) + Number(p.fine) - Number(p.discount);
+                                const balance = Math.max(0, netDue - Number(p.amount_paid));
                                 return (
                                     <TableRow key={p.id}>
-                                        <TableCell className="font-mono text-xs text-slate-500">{p.receipt_no}</TableCell>
+                                        <TableCell className="text-slate-400 text-xs">{idx + 1}</TableCell>
                                         <TableCell>
                                             <p className="font-medium text-sm text-slate-900 dark:text-white">{p.student?.first_name} {p.student?.last_name}</p>
                                             <p className="text-xs text-slate-400">{p.student?.school_class?.name} · ID: {p.student?.admission_no}</p>
@@ -140,10 +151,10 @@ export default function FeePayments({ payments, classes, filters, stats }: Props
                                             <p className="text-sm text-slate-700 dark:text-slate-300">{p.fee_structure?.fee_category?.name}</p>
                                             <p className="text-xs text-slate-400">{p.fee_structure?.academic_year} {p.month_year ? `· ${p.month_year}` : ''}</p>
                                         </TableCell>
-                                        <TableCell className="text-right text-sm">৳{Number(p.amount_due).toLocaleString()}</TableCell>
-                                        <TableCell className="text-right text-sm font-semibold text-green-600">৳{Number(p.amount_paid).toLocaleString()}</TableCell>
+                                        <TableCell className="text-right text-sm">{formatMoney(p.amount_due)}</TableCell>
+                                        <TableCell className="text-right text-sm font-semibold text-green-600">{formatMoney(p.amount_paid)}</TableCell>
                                         <TableCell className={`text-right text-sm font-medium ${Number(balance) > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                                            {Number(balance) > 0 ? `৳${Number(balance).toLocaleString()}` : '—'}
+                                            {Number(balance) > 0 ? formatMoney(balance) : '—'}
                                         </TableCell>
                                         <TableCell className="text-xs text-slate-500">{METHOD_LABELS[p.method] ?? p.method}</TableCell>
                                         <TableCell className="text-xs text-slate-500">

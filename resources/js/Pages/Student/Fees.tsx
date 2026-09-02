@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { DollarSign, CheckCircle, AlertTriangle } from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
 
 interface Payment { id: number; month: string; due: number; paid: number; balance: number; status: string; payment_date: string | null; }
 interface Summary { total_due: number; total_paid: number; balance: number; }
@@ -21,6 +22,8 @@ const statusColor: Record<string, string> = {
 };
 
 export default function Fees({ linked, student, summary, payments }: Props) {
+    const { format: formatMoney } = useCurrency();
+
     if (!linked) {
         return (
             <AppLayout title="My Fees">
@@ -45,13 +48,13 @@ export default function Fees({ linked, student, summary, payments }: Props) {
                     <Card>
                         <CardContent className="p-4 text-center">
                             <p className="text-xs text-slate-500 mb-1">Total Due</p>
-                            <p className="text-lg font-bold text-slate-800 dark:text-white">৳{summary.total_due.toLocaleString()}</p>
+                            <p className="text-lg font-bold text-slate-800 dark:text-white">{formatMoney(summary.total_due)}</p>
                         </CardContent>
                     </Card>
                     <Card>
                         <CardContent className="p-4 text-center">
                             <p className="text-xs text-slate-500 mb-1">Total Paid</p>
-                            <p className="text-lg font-bold text-green-600">৳{summary.total_paid.toLocaleString()}</p>
+                            <p className="text-lg font-bold text-green-600">{formatMoney(summary.total_paid)}</p>
                         </CardContent>
                     </Card>
                     <Card className={cn(summary.balance > 0 ? 'border-red-200 dark:border-red-900' : 'border-green-200 dark:border-green-900')}>
@@ -63,7 +66,7 @@ export default function Fees({ linked, student, summary, payments }: Props) {
                                 <p className="text-xs text-slate-500">Balance</p>
                             </div>
                             <p className={cn('text-lg font-bold', summary.balance > 0 ? 'text-red-600' : 'text-green-600')}>
-                                {summary.balance > 0 ? `৳${summary.balance.toLocaleString()}` : 'Clear'}
+                                {summary.balance > 0 ? formatMoney(summary.balance) : 'Clear'}
                             </p>
                         </CardContent>
                     </Card>
@@ -91,10 +94,10 @@ export default function Fees({ linked, student, summary, payments }: Props) {
                                     {payments.map(p => (
                                         <tr key={p.id}>
                                             <td className="px-4 py-2.5 text-slate-700 dark:text-slate-300">{p.month}</td>
-                                            <td className="px-4 py-2.5 text-right text-slate-600">৳{p.due.toLocaleString()}</td>
-                                            <td className="px-4 py-2.5 text-right text-green-600">৳{p.paid.toLocaleString()}</td>
+                                            <td className="px-4 py-2.5 text-right text-slate-600">{formatMoney(p.due)}</td>
+                                            <td className="px-4 py-2.5 text-right text-green-600">{formatMoney(p.paid)}</td>
                                             <td className={cn('px-4 py-2.5 text-right font-medium', p.balance > 0 ? 'text-red-500' : 'text-green-600')}>
-                                                {p.balance > 0 ? `৳${p.balance.toLocaleString()}` : '—'}
+                                                {p.balance > 0 ? formatMoney(p.balance) : '—'}
                                             </td>
                                             <td className="px-4 py-2.5 text-center">
                                                 <span className={cn('text-[10px] font-medium px-2 py-0.5 rounded-full capitalize', statusColor[p.status] ?? 'bg-slate-100 text-slate-600')}>{p.status}</span>

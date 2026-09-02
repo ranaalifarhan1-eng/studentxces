@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ArrowLeft, Plus, Wrench } from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
 import type { PageProps } from '@/Types';
 
 interface MaintenanceLog {
@@ -33,8 +34,9 @@ const logDefault = { date: new Date().toISOString().split('T')[0], description: 
 
 export default function AssetDetail({ asset }: { asset: Asset }) {
     const { flash } = usePage<PageProps>().props;
-    const [open, setOpen]   = useState(false);
-    const [form, setForm]   = useState(logDefault);
+    const { currency, format: formatMoney } = useCurrency();
+    const [open, setOpen]     = useState(false);
+    const [form, setForm]     = useState<Record<string, string>>(logDefault);
     const [saving, setSaving] = useState(false);
 
     function handleLog() {
@@ -42,25 +44,30 @@ export default function AssetDetail({ asset }: { asset: Asset }) {
         router.post(`/school/inventory/assets/${asset.id}/maintenance`, form, {
             preserveScroll: true,
             onSuccess: () => { setOpen(false); setForm(logDefault); setSaving(false); },
-            onError:   () => setSaving(false),
+            onError: () => setSaving(false),
         });
     }
 
     return (
-        <AppLayout title={`Asset — ${asset.name}`}>
-            <div className="max-w-3xl mx-auto space-y-6">
+        <AppLayout title={`${asset.name} — Asset Details`}>
+            <div className="space-y-6 max-w-4xl mx-auto">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <Link href="/school/inventory/assets" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 dark:hover:text-white">
                             <ArrowLeft className="w-4 h-4" /> Assets
                         </Link>
                         <span className="text-slate-300 dark:text-slate-700">|</span>
-                        <h1 className="text-xl font-bold text-slate-900 dark:text-white">{asset.name}</h1>
-                        <Badge className={`border-0 text-xs capitalize ${STATUS_STYLE[asset.status] ?? ''}`}>{asset.status}</Badge>
+                        <div>
+                            <h1 className="text-xl font-bold text-slate-900 dark:text-white">{asset.name}</h1>
+                            <p className="text-xs text-slate-400 font-mono mt-0.5">{asset.asset_code}</p>
+                        </div>
                     </div>
-                    <Button onClick={() => setOpen(true)} className="bg-amber-500 hover:bg-amber-600 text-white inline-flex items-center gap-2">
-                        <Wrench className="w-4 h-4" /> Log Maintenance
-                    </Button>
+                    <div className="flex items-center gap-2">
+                        <Badge className={`border-0 text-xs capitalize ${STATUS_STYLE[asset.status] ?? ''}`}>{asset.status}</Badge>
+                        <Button onClick={() => setOpen(true)} className="bg-amber-500 hover:bg-amber-600 text-white inline-flex items-center gap-1.5 text-xs">
+                            <Plus className="w-3.5 h-3.5" /> Log Maintenance
+                        </Button>
+                    </div>
                 </div>
 
                 {flash?.success && (
@@ -74,8 +81,8 @@ export default function AssetDetail({ asset }: { asset: Asset }) {
                             { label: 'Asset Code',    value: asset.asset_code },
                             { label: 'Category',      value: asset.category ?? '—' },
                             { label: 'Purchase Date', value: asset.purchase_date ? new Date(asset.purchase_date).toLocaleDateString() : '—' },
-                            { label: 'Purchase Price',value: `৳${Number(asset.purchase_price).toLocaleString()}` },
-                            { label: 'Current Value', value: `৳${Number(asset.current_value).toLocaleString()}` },
+                            { label: 'Purchase Price',value: formatMoney(asset.purchase_price) },
+                            { label: 'Current Value', value: formatMoney(asset.current_value) },
                             { label: 'Depreciation',  value: `${asset.depreciation_rate}% / yr (${asset.depreciation_method.replace('_', ' ')})` },
                             { label: 'Location',      value: asset.location ?? '—' },
                             { label: 'Assigned To',   value: asset.assigned_to ?? '—' },
@@ -118,7 +125,7 @@ export default function AssetDetail({ asset }: { asset: Asset }) {
                                         <TableCell className="text-sm text-slate-500">{new Date(log.date).toLocaleDateString()}</TableCell>
                                         <TableCell className="text-sm text-slate-700 dark:text-slate-300">{log.description}</TableCell>
                                         <TableCell className="text-sm text-slate-500">{log.vendor ?? '—'}</TableCell>
-                                        <TableCell className="text-right text-sm font-medium">৳{Number(log.cost).toLocaleString()}</TableCell>
+                                        <TableCell className="text-right text-sm font-medium">{formatMoney(log.cost)}</TableCell>
                                         <TableCell className="text-sm text-slate-500">
                                             {log.next_maintenance_date ? new Date(log.next_maintenance_date).toLocaleDateString() : '—'}
                                         </TableCell>
@@ -144,7 +151,7 @@ export default function AssetDetail({ asset }: { asset: Asset }) {
                         </div>
                         <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-1.5">
-                                <Label>Cost (৳)</Label>
+                                <Label>Cost ({currency})</Label>
                                 <Input type="number" min="0" value={form.cost} onChange={e => setForm(p => ({ ...p, cost: e.target.value }))} />
                             </div>
                             <div className="space-y-1.5">

@@ -5,6 +5,7 @@ import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent } from '@/components/ui/card';
 import { ArrowLeft, AlertTriangle, DollarSign } from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
 
 interface OverdueIssue {
     id: number; overdue_days: number; estimated_fine: number;
@@ -15,11 +16,13 @@ interface OverdueIssue {
 interface Summary { count: number; total_fine_est: number; }
 
 export default function OverdueBooks({ overdue, summary }: { overdue: OverdueIssue[]; summary: Summary }) {
+    const { format: formatMoney } = useCurrency();
+
     return (
         <AppLayout title="Library — Overdue Books">
             <div className="space-y-6">
                 <div className="flex items-center gap-3">
-                    <Link href="/school/library/books" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 dark:hover:text-white">
+                    <Link href="/school/library" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 dark:hover:text-white">
                         <ArrowLeft className="w-4 h-4" /> Library
                     </Link>
                     <span className="text-slate-300 dark:text-slate-700">|</span>
@@ -43,7 +46,7 @@ export default function OverdueBooks({ overdue, summary }: { overdue: OverdueIss
                         <CardContent className="p-4 flex items-center gap-3">
                             <DollarSign className="w-5 h-5 text-amber-500" />
                             <div>
-                                <p className="text-xl font-bold text-amber-600">৳{summary.total_fine_est?.toLocaleString()}</p>
+                                <p className="text-xl font-bold text-amber-600">{formatMoney(summary.total_fine_est ?? 0)}</p>
                                 <p className="text-xs text-slate-500">Est. Fines</p>
                             </div>
                         </CardContent>
@@ -88,7 +91,7 @@ export default function OverdueBooks({ overdue, summary }: { overdue: OverdueIss
                                         <TableCell className="text-center">
                                             <Badge className="bg-red-100 text-red-700 border-0 font-bold">{iss.overdue_days} days</Badge>
                                         </TableCell>
-                                        <TableCell className="text-right font-semibold text-amber-600">৳{iss.estimated_fine?.toLocaleString()}</TableCell>
+                                        <TableCell className="text-right font-semibold text-amber-600">{formatMoney(iss.estimated_fine ?? 0)}</TableCell>
                                         <TableCell>
                                             <Link href="/school/library/issues">
                                                 <Button size="sm" variant="outline" className="text-xs h-7">Return</Button>

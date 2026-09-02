@@ -14,6 +14,8 @@ use App\Services\CommercialPricingService;
 use App\Services\SchoolOnboardingService;
 use Carbon\Carbon;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Hash;
+use Spatie\Activitylog\Models\Activity;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
@@ -126,31 +128,32 @@ class GuidedCommercialSchoolOnboardingTest extends TestCase
     public function test_starter_3_month_onboarding_succeeds(): void
     {
         $payload = [
-            'name'                => 'Al-Hadi Grammar School',
-            'code'                => 'AHGS01',
-            'slug'                => 'al-hadi-grammar-school',
-            'email'               => 'info@alhadi.edu.pk',
-            'phone'               => '+923001234567',
-            'city'                => 'Lahore',
-            'state'               => 'Punjab',
-            'country'             => 'PK',
-            'timezone'            => 'Asia/Karachi',
-            'currency'            => 'PKR',
-            'language'            => 'en',
-            'status'              => 'active',
-            'admin_name'          => 'Muhammad Usman',
-            'admin_email'         => 'admin@alhadi.edu.pk',
-            'admin_phone'         => '+923001234567',
-            'admin_password'      => 'SecureAdminPass123!',
-            'package_id'          => $this->starterPkg->id,
-            'billing_term_months' => 3,
-            'start_date'          => '2026-09-01',
-            'amount_paid'         => 9000.00,
-            'payment_method'      => 'bank_transfer',
-            'academic_year_name'  => 'Academic Year 2026-27',
-            'academic_start'      => '2026-08-01',
-            'academic_end'        => '2027-06-30',
-            'set_academic_current'=> true,
+            'name'                  => 'Al-Hadi Grammar School',
+            'code'                  => 'AHGS01',
+            'slug'                  => 'al-hadi-grammar-school',
+            'email'                 => 'info@alhadi.edu.pk',
+            'phone'                 => '+923001234567',
+            'city'                  => 'Lahore',
+            'state'                 => 'Punjab',
+            'country'               => 'PK',
+            'timezone'              => 'Asia/Karachi',
+            'currency'              => 'PKR',
+            'language'              => 'en',
+            'status'                => 'active',
+            'admin_name'            => 'Muhammad Usman',
+            'admin_email'           => 'admin@alhadi.edu.pk',
+            'admin_phone'           => '+923001234567',
+            'admin_password'        => 'SecureAdminPass123!',
+            'package_id'            => $this->starterPkg->id,
+            'billing_term_months'   => 3,
+            'start_date'            => '2026-09-01',
+            'amount_paid'           => 9000.00,
+            'activate_subscription' => true,
+            'payment_method'        => 'bank_transfer',
+            'academic_year_name'    => 'Academic Year 2026-27',
+            'academic_start'        => '2026-08-01',
+            'academic_end'          => '2027-06-30',
+            'set_academic_current'  => true,
         ];
 
         $response = $this->actingAs($this->superAdmin)
@@ -176,6 +179,7 @@ class GuidedCommercialSchoolOnboardingTest extends TestCase
         $this->assertEquals(0.00, (float) $sub->discount_percent);
         $this->assertEquals(9000.00, (float) $sub->billed_amount);
         $this->assertEquals(9000.00, (float) $sub->amount_paid);
+        $this->assertEquals('active', $sub->status);
         $this->assertEquals('2026-09-01', $sub->start_date->format('Y-m-d'));
         $this->assertEquals('2026-12-01', $sub->end_date->format('Y-m-d'));
 
@@ -184,23 +188,92 @@ class GuidedCommercialSchoolOnboardingTest extends TestCase
         $this->assertTrue($ay->is_current);
     }
 
-    public function test_standard_6_month_onboarding_with_auto_discount(): void
+    public function test_unpaid_subscription_defaults_to_suspended_status(): void
     {
         $payload = [
-            'name'                => 'Beacon Light School',
-            'code'                => 'BLS01',
-            'slug'                => 'beacon-light-school',
-            'country'             => 'PK',
-            'timezone'            => 'Asia/Karachi',
-            'currency'            => 'PKR',
-            'language'            => 'en',
-            'admin_name'          => 'Fatima Tariq',
-            'admin_email'         => 'fatima@beaconlight.edu.pk',
-            'admin_password'      => 'Password@12345',
-            'package_id'          => $this->standardPkg->id,
-            'billing_term_months' => 6,
-            'start_date'          => '2026-09-15',
-            'amount_paid'         => 15000.00, // Partial payment
+            'name'                  => 'Unpaid Test School',
+            'code'                  => 'UTS01',
+            'slug'                  => 'unpaid-test-school',
+            'country'               => 'PK',
+            'timezone'              => 'Asia/Karachi',
+            'currency'              => 'PKR',
+            'language'              => 'en',
+            'admin_name'            => 'Unpaid Admin',
+            'admin_email'           => 'admin@unpaid.test',
+            'admin_password'        => 'Password@123',
+            'package_id'            => $this->starterPkg->id,
+            'billing_term_months'   => 3,
+            'start_date'            => '2026-09-01',
+            'amount_paid'           => 0.00, // Unpaid
+            'activate_subscription' => false,
+        ];
+
+        $response = $this->actingAs($this->superAdmin)
+            ->post(route('super-admin.schools.onboard.store'), $payload);
+
+        $response->assertRedirect(route('super-admin.schools.onboard'));
+
+        $school = School::where('slug', 'unpaid-test-school')->first();
+        $sub = SchoolSubscription::where('school_id', $school->id)->first();
+
+        $this->assertNotNull($sub);
+        $this->assertEquals(0.00, (float) $sub->amount_paid);
+        $this->assertEquals(9000.00, (float) $sub->billed_amount);
+        $this->assertEquals('suspended', $sub->status); // Suspended/Inactive by default
+    }
+
+    public function test_unpaid_subscription_with_explicit_superadmin_override_becomes_active(): void
+    {
+        $payload = [
+            'name'                     => 'Unpaid Override School',
+            'code'                     => 'UOS01',
+            'slug'                     => 'unpaid-override-school',
+            'country'                  => 'PK',
+            'timezone'                 => 'Asia/Karachi',
+            'currency'                 => 'PKR',
+            'language'                 => 'en',
+            'admin_name'               => 'Override Admin',
+            'admin_email'              => 'admin@override.test',
+            'admin_password'           => 'Password@123',
+            'package_id'               => $this->starterPkg->id,
+            'billing_term_months'      => 3,
+            'start_date'               => '2026-09-01',
+            'amount_paid'              => 0.00, // Unpaid
+            'activate_subscription'    => true,
+            'activate_unpaid_override' => true, // Explicit Super Admin override
+        ];
+
+        $response = $this->actingAs($this->superAdmin)
+            ->post(route('super-admin.schools.onboard.store'), $payload);
+
+        $response->assertRedirect(route('super-admin.schools.onboard'));
+
+        $school = School::where('slug', 'unpaid-override-school')->first();
+        $sub = SchoolSubscription::where('school_id', $school->id)->first();
+
+        $this->assertNotNull($sub);
+        $this->assertEquals(0.00, (float) $sub->amount_paid);
+        $this->assertEquals('active', $sub->status); // Explicitly activated by override
+    }
+
+    public function test_standard_6_month_onboarding_with_auto_discount_and_partial_payment(): void
+    {
+        $payload = [
+            'name'                  => 'Beacon Light School',
+            'code'                  => 'BLS01',
+            'slug'                  => 'beacon-light-school',
+            'country'               => 'PK',
+            'timezone'              => 'Asia/Karachi',
+            'currency'              => 'PKR',
+            'language'              => 'en',
+            'admin_name'            => 'Fatima Tariq',
+            'admin_email'           => 'fatima@beaconlight.edu.pk',
+            'admin_password'        => 'Password@12345',
+            'package_id'            => $this->standardPkg->id,
+            'billing_term_months'   => 6,
+            'start_date'            => '2026-09-15',
+            'amount_paid'           => 15000.00, // Partial payment
+            'activate_subscription' => true,
         ];
 
         $response = $this->actingAs($this->superAdmin)
@@ -216,27 +289,29 @@ class GuidedCommercialSchoolOnboardingTest extends TestCase
         $this->assertEquals(5.00, (float) $sub->discount_percent);
         $this->assertEquals(28500.00, (float) $sub->billed_amount);
         $this->assertEquals(15000.00, (float) $sub->amount_paid);
+        $this->assertEquals('active', $sub->status);
         $this->assertEquals('2027-03-15', $sub->end_date->format('Y-m-d'));
     }
 
     public function test_pro_12_month_onboarding_with_coupon_application(): void
     {
         $payload = [
-            'name'                => 'City Cambridge College',
-            'code'                => 'CCC01',
-            'slug'                => 'city-cambridge-college',
-            'country'             => 'PK',
-            'timezone'            => 'Asia/Karachi',
-            'currency'            => 'PKR',
-            'language'            => 'en',
-            'admin_name'          => 'Kamran Akmal',
-            'admin_email'         => 'kamran@citycambridge.edu.pk',
-            'admin_password'      => 'SecureCollegePass99!',
-            'package_id'          => $this->proPkg->id,
-            'billing_term_months' => 12,
-            'coupon_id'           => $this->percentCoupon->id, // 10% coupon
-            'start_date'          => '2026-10-01',
-            'amount_paid'         => 0.00, // Unpaid
+            'name'                  => 'City Cambridge College',
+            'code'                  => 'CCC01',
+            'slug'                  => 'city-cambridge-college',
+            'country'               => 'PK',
+            'timezone'              => 'Asia/Karachi',
+            'currency'              => 'PKR',
+            'language'              => 'en',
+            'admin_name'            => 'Kamran Akmal',
+            'admin_email'           => 'kamran@citycambridge.edu.pk',
+            'admin_password'        => 'SecureCollegePass99!',
+            'package_id'            => $this->proPkg->id,
+            'billing_term_months'   => 12,
+            'coupon_id'             => $this->percentCoupon->id, // 10% coupon
+            'start_date'            => '2026-10-01',
+            'amount_paid'           => 77760.00, // Full payment
+            'activate_subscription' => true,
         ];
 
         $response = $this->actingAs($this->superAdmin)
@@ -251,9 +326,83 @@ class GuidedCommercialSchoolOnboardingTest extends TestCase
         $this->assertEquals(12, $sub->billing_term_months);
         $this->assertEquals(10.00, (float) $sub->discount_percent);
         $this->assertEquals(77760.00, (float) $sub->billed_amount);
-        $this->assertEquals(0.00, (float) $sub->amount_paid);
+        $this->assertEquals(77760.00, (float) $sub->amount_paid);
+        $this->assertEquals('active', $sub->status);
         $this->assertEquals($this->percentCoupon->id, $sub->coupon_id);
         $this->assertEquals('2027-10-01', $sub->end_date->format('Y-m-d'));
+    }
+
+    public function test_duplicate_school_code_is_rejected(): void
+    {
+        // First creation with code 'SCHCODE01'
+        School::create([
+            'name'     => 'First Code School',
+            'slug'     => 'first-code-school',
+            'country'  => 'PK',
+            'timezone' => 'Asia/Karachi',
+            'currency' => 'PKR',
+            'language' => 'en',
+            'status'   => 'active',
+            'settings' => ['school_code' => 'SCHCODE01'],
+        ]);
+
+        // Attempt second school with duplicate code 'SCHCODE01' (even with unique name and slug)
+        $payload = [
+            'name'                => 'Second School Unique Name',
+            'code'                => 'SCHCODE01', // Duplicate code
+            'slug'                => 'second-school-unique-name',
+            'country'             => 'PK',
+            'timezone'            => 'Asia/Karachi',
+            'currency'            => 'PKR',
+            'language'            => 'en',
+            'admin_name'          => 'Unique Admin',
+            'admin_email'         => 'uniqueadmin@test.com',
+            'admin_password'      => 'Password@123',
+            'package_id'          => $this->starterPkg->id,
+            'billing_term_months' => 3,
+            'start_date'          => '2026-09-01',
+        ];
+
+        $response = $this->actingAs($this->superAdmin)
+            ->post(route('super-admin.schools.onboard.store'), $payload);
+
+        $response->assertSessionHasErrors(['code']);
+        $this->assertDatabaseMissing('schools', ['slug' => 'second-school-unique-name']);
+    }
+
+    public function test_duplicate_school_name_with_different_code_is_rejected(): void
+    {
+        School::create([
+            'name'     => 'Duplicate Name School',
+            'slug'     => 'dup-name-school-1',
+            'country'  => 'PK',
+            'timezone' => 'Asia/Karachi',
+            'currency' => 'PKR',
+            'language' => 'en',
+            'status'   => 'active',
+            'settings' => ['school_code' => 'CODEA'],
+        ]);
+
+        $payload = [
+            'name'                => 'Duplicate Name School', // Duplicate name
+            'code'                => 'CODEB',                 // Unique code
+            'slug'                => 'dup-name-school-2',
+            'country'             => 'PK',
+            'timezone'            => 'Asia/Karachi',
+            'currency'            => 'PKR',
+            'language'            => 'en',
+            'admin_name'          => 'Admin B',
+            'admin_email'         => 'adminb@test.com',
+            'admin_password'      => 'Password@123',
+            'package_id'          => $this->starterPkg->id,
+            'billing_term_months' => 3,
+            'start_date'          => '2026-09-01',
+        ];
+
+        $response = $this->actingAs($this->superAdmin)
+            ->post(route('super-admin.schools.onboard.store'), $payload);
+
+        $response->assertSessionHasErrors(['name']);
     }
 
     public function test_payment_greater_than_billed_amount_is_rejected(): void
@@ -404,83 +553,55 @@ class GuidedCommercialSchoolOnboardingTest extends TestCase
         $this->assertStringStartsWith('stx_', $domain->verification_token);
     }
 
-    public function test_duplicate_school_identity_or_admin_email_is_rejected(): void
+    public function test_raw_password_and_secrets_are_never_persisted_in_activity_or_flash(): void
     {
-        // First creation
-        $school = School::create([
-            'name'     => 'Existing Elite School',
-            'code'     => 'EES01',
-            'slug'     => 'existing-elite-school',
-            'country'  => 'PK',
-            'timezone' => 'Asia/Karachi',
-            'currency' => 'PKR',
-            'language' => 'en',
-            'status'   => 'active',
-        ]);
-        User::create([
-            'school_id' => $school->id,
-            'name'      => 'Existing Admin',
-            'email'     => 'existingadmin@eliteschool.edu.pk',
-            'password'  => bcrypt('Pass123!'),
-            'status'    => 'active',
-        ]);
+        $rawPassword = 'SuperSecretUniquePass!999';
 
-        // Try duplicate name
-        $payload1 = [
-            'name'                => 'Existing Elite School',
-            'code'                => 'NEWCODE01',
-            'slug'                => 'unique-slug-1',
+        $payload = [
+            'name'                => 'Credential Safety Academy',
+            'code'                => 'CSA01',
+            'slug'                => 'credential-safety-academy',
             'country'             => 'PK',
             'timezone'            => 'Asia/Karachi',
             'currency'            => 'PKR',
             'language'            => 'en',
-            'admin_name'          => 'New Admin',
-            'admin_email'         => 'newadmin1@test.com',
-            'admin_password'      => 'Password@123',
+            'admin_name'          => 'Safe Admin',
+            'admin_email'         => 'admin@credentialsafety.edu.pk',
+            'admin_password'      => $rawPassword,
             'package_id'          => $this->starterPkg->id,
             'billing_term_months' => 3,
             'start_date'          => '2026-09-01',
+            'custom_domain'       => 'app.credentialsafety.edu.pk',
         ];
-        $res1 = $this->actingAs($this->superAdmin)->post(route('super-admin.schools.onboard.store'), $payload1);
-        $res1->assertSessionHasErrors(['name']);
 
-        // Try duplicate slug
-        $payload2 = [
-            'name'                => 'Brand New School',
-            'code'                => 'BNS01',
-            'slug'                => 'existing-elite-school', // Duplicate slug
-            'country'             => 'PK',
-            'timezone'            => 'Asia/Karachi',
-            'currency'            => 'PKR',
-            'language'            => 'en',
-            'admin_name'          => 'New Admin',
-            'admin_email'         => 'newadmin2@test.com',
-            'admin_password'      => 'Password@123',
-            'package_id'          => $this->starterPkg->id,
-            'billing_term_months' => 3,
-            'start_date'          => '2026-09-01',
-        ];
-        $res2 = $this->actingAs($this->superAdmin)->post(route('super-admin.schools.onboard.store'), $payload2);
-        $res2->assertSessionHasErrors(['slug']);
+        $response = $this->actingAs($this->superAdmin)
+            ->post(route('super-admin.schools.onboard.store'), $payload);
 
-        // Try duplicate admin email
-        $payload3 = [
-            'name'                => 'Unique School Three',
-            'code'                => 'UST01',
-            'slug'                => 'unique-school-three',
-            'country'             => 'PK',
-            'timezone'            => 'Asia/Karachi',
-            'currency'            => 'PKR',
-            'language'            => 'en',
-            'admin_name'          => 'New Admin',
-            'admin_email'         => 'existingadmin@eliteschool.edu.pk', // Duplicate email
-            'admin_password'      => 'Password@123',
-            'package_id'          => $this->starterPkg->id,
-            'billing_term_months' => 3,
-            'start_date'          => '2026-09-01',
-        ];
-        $res3 = $this->actingAs($this->superAdmin)->post(route('super-admin.schools.onboard.store'), $payload3);
-        $res3->assertSessionHasErrors(['admin_email']);
+        $response->assertRedirect(route('super-admin.schools.onboard'));
+
+        // 1. Check DB User record: password is strictly hashed
+        $user = User::where('email', 'admin@credentialsafety.edu.pk')->first();
+        $this->assertNotNull($user);
+        $this->assertNotEquals($rawPassword, $user->password);
+        $this->assertTrue(Hash::check($rawPassword, $user->password));
+
+        // 2. Check Activity Log: description and properties contain zero passwords or tokens
+        $latestLog = Activity::latest()->first();
+        $this->assertNotNull($latestLog);
+        $this->assertStringNotContainsString($rawPassword, $latestLog->description);
+        $this->assertStringNotContainsString('stx_', $latestLog->description);
+
+        // 3. Check Session Flash: contains no password, no hash, no verification token
+        $flash = session('onboarding_result');
+        $this->assertNotNull($flash);
+        $this->assertArrayNotHasKey('admin_password', $flash);
+        $this->assertArrayNotHasKey('password', $flash);
+        $this->assertArrayNotHasKey('password_hash', $flash);
+        $this->assertArrayNotHasKey('verification_token', $flash);
+        $this->assertArrayHasKey('school_id', $flash);
+        $this->assertArrayHasKey('school_name', $flash);
+        $this->assertArrayHasKey('school_code', $flash);
+        $this->assertArrayHasKey('subscription_status', $flash);
     }
 
     public function test_transaction_rolls_back_atomically_on_unexpected_failure(): void
@@ -516,13 +637,13 @@ class GuidedCommercialSchoolOnboardingTest extends TestCase
         // Setup mock Lahore Cambridge School
         $lcs = School::create([
             'name'     => 'Lahore Cambridge School',
-            'code'     => 'LCS01',
             'slug'     => 'lahore-cambridge-school',
             'country'  => 'PK',
             'timezone' => 'Asia/Karachi',
             'currency' => 'PKR',
             'language' => 'en',
             'status'   => 'active',
+            'settings' => ['school_code' => 'LCS01'],
         ]);
         $lcsAdmin = User::create([
             'school_id' => $lcs->id,
@@ -566,6 +687,7 @@ class GuidedCommercialSchoolOnboardingTest extends TestCase
         // Verify Lahore Cambridge School is 100% untouched
         $lcsFresh = $lcs->fresh();
         $this->assertEquals('Lahore Cambridge School', $lcsFresh->name);
+        $this->assertEquals('LCS01', $lcsFresh->code);
         $this->assertEquals($this->legacyPkg->id, $lcsSub->fresh()->package_id);
     }
 }

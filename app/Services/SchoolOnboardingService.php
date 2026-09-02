@@ -33,7 +33,21 @@ class SchoolOnboardingService
     public function onboard(array $data, ?User $operator = null): array
     {
         return DB::transaction(function () use ($data, $operator) {
-            // 1. Validate Commercial Package (Must be active and non-internal)
+            // 1. Validate School Code Uniqueness (canonical settings JSON check)
+            $code = strtoupper(trim($data['code'] ?? ''));
+            if ($code === '') {
+                throw ValidationException::withMessages([
+                    'code' => 'School code is required.',
+                ]);
+            }
+
+            if (School::where('settings->school_code', $code)->exists()) {
+                throw ValidationException::withMessages([
+                    'code' => "A school with code '{$code}' already exists.",
+                ]);
+            }
+
+            // 2. Validate Commercial Package (Must be active and non-internal)
             $package = Package::where('id', $data['package_id'])
                 ->where('is_active', true)
                 ->where('is_internal', false)
@@ -45,7 +59,7 @@ class SchoolOnboardingService
                 ]);
             }
 
-            // 2. Validate Term Months & Active PackagePrice
+            // 3. Validate Term Months & Active PackagePrice
             $termMonths = (int) ($data['billing_term_months'] ?? 0);
             if (! in_array($termMonths, [3, 6, 12], true)) {
                 throw ValidationException::withMessages([
@@ -64,7 +78,7 @@ class SchoolOnboardingService
                 ]);
             }
 
-            // 3. Calculate Server-Authoritative Billed Amount & Coupon
+            // 4. Calculate Server-Authoritative Billed Amount & Coupon
             $termPrice = (float) $priceRow->total_price;
             $couponDiscount = 0.00;
             $couponId = null;
@@ -83,7 +97,7 @@ class SchoolOnboardingService
 
             $billedAmount = max(0.00, round($termPrice - $couponDiscount, 2));
 
-            // 4. Validate Amount Received (0 <= amount_paid <= billed_amount)
+            // 5. Validate Amount Received (0 <= amount_paid <= billed_amount)
             $amountPaid = isset($data['amount_paid']) ? (float) $data['amount_paid'] : 0.00;
             if ($amountPaid < 0) {
                 throw ValidationException::withMessages([
@@ -97,16 +111,28 @@ class SchoolOnboardingService
                 ]);
             }
 
-            // 5. Server-Authoritative End Date
+            // 6. Explicit Subscription Access Status Resolution
+            $requestedActivation = isset($data['activate_subscription']) ? (bool) $data['activate_subscription'] : false;
+            $unpaidOverride = isset($data['activate_unpaid_override']) ? (bool) $data['activate_unpaid_override'] : false;
+
+            if ($amountPaid == 0.00) {
+                // Unpaid default is suspended unless explicitly overridden by operator
+                $subStatus = ($requestedActivation && $unpaidOverride) ? 'active' : 'suspended';
+            } else {
+                // Paid (partial or full) uses explicit operator activation choice
+                $subStatus = $requestedActivation ? 'active' : 'suspended';
+            }
+
+            // 7. Server-Authoritative End Date
             $startDate = Carbon::parse($data['start_date'])->toDateString();
             $endDate   = Carbon::parse($startDate)->addMonths($termMonths)->toDateString();
 
-            // 6. Ensure Required Role Exists
+            // 8. Ensure Required Role Exists
             if (! Role::where('name', 'school-admin')->where('guard_name', 'web')->exists()) {
                 throw new \RuntimeException("Safety violation: Required platform role 'school-admin' does not exist.");
             }
 
-            // 7. Create School
+            // 9. Create School
             $school = School::create([
                 'name'     => trim($data['name']),
                 'slug'     => strtolower(trim($data['slug'])),
@@ -120,12 +146,12 @@ class SchoolOnboardingService
                 'currency' => ! empty($data['currency']) ? strtoupper(trim($data['currency'])) : 'PKR',
                 'language' => ! empty($data['language']) ? strtolower(trim($data['language'])) : 'en',
                 'status'   => ! empty($data['status']) ? strtolower(trim($data['status'])) : 'active',
-                'settings' => array_filter([
-                    'school_code' => ! empty($data['code']) ? strtoupper(trim($data['code'])) : null,
-                ]),
+                'settings' => [
+                    'school_code' => $code,
+                ],
             ]);
 
-            // 8. Create School Admin User
+            // 10. Create School Admin User (Password securely hashed; NEVER stored raw)
             $adminUser = User::create([
                 'school_id' => $school->id,
                 'name'      => trim($data['admin_name']),
@@ -136,7 +162,7 @@ class SchoolOnboardingService
             ]);
             $adminUser->assignRole('school-admin');
 
-            // 9. Create Commercial Subscription with Snapshots
+            // 11. Create Commercial Subscription with Snapshots & Explicit Status
             $subscription = SchoolSubscription::create([
                 'school_id'           => $school->id,
                 'package_id'          => $package->id,
@@ -149,14 +175,14 @@ class SchoolOnboardingService
                 'coupon_id'           => $couponId,
                 'start_date'          => $startDate,
                 'end_date'            => $endDate,
-                'status'              => 'active',
+                'status'              => $subStatus,
                 'is_trial'            => false,
                 'amount_paid'         => $amountPaid,
                 'payment_method'      => $data['payment_method'] ?? 'manual',
                 'notes'               => $data['notes'] ?? 'Commercial guided onboarding',
             ]);
 
-            // 10. Optional Academic Year
+            // 12. Optional Academic Year
             $academicYear = null;
             if (! empty($data['academic_year_name'])) {
                 $academicYear = AcademicYear::create([
@@ -168,19 +194,19 @@ class SchoolOnboardingService
                 ]);
             }
 
-            // 11. Optional Custom Domain (Pending State)
+            // 13. Optional Custom Domain (Pending State)
             $domain = null;
             if (! empty($data['custom_domain'])) {
                 $domain = $this->domainService->addCustomDomain($school, $data['custom_domain']);
             }
 
-            // 12. Platform Activity Audit (Zero Sensitive Passwords or Tokens Logged)
+            // 14. Platform Activity Audit (Zero Sensitive Passwords or Tokens Logged)
             if (function_exists('activity')) {
                 $log = activity()->performedOn($school);
                 if ($operator) {
                     $log->causedBy($operator);
                 }
-                $log->log("Commercial school onboarded: School [{$school->name}] (#{$school->id}), Package [{$package->name}] ({$termMonths}mo), Billed [{$billedAmount}], Paid [{$amountPaid}]");
+                $log->log("Commercial school onboarded: School [{$school->name}] (#{$school->id}), Code [{$code}], Package [{$package->name}] ({$termMonths}mo), Status [{$subStatus}], Billed [{$billedAmount}], Paid [{$amountPaid}]");
             }
 
             return [
@@ -196,6 +222,7 @@ class SchoolOnboardingService
                 'amount_paid'     => $amountPaid,
                 'balance_due'     => max(0.00, round($billedAmount - $amountPaid, 2)),
                 'coupon_discount' => $couponDiscount,
+                'sub_status'      => $subStatus,
             ];
         });
     }

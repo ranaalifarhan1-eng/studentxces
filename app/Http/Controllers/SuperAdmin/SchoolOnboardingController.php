@@ -73,6 +73,8 @@ class SchoolOnboardingController extends Controller
             'school_slug'     => $result['school']->slug,
             'admin_name'      => $result['admin_user']->name,
             'admin_email'     => $result['admin_user']->email,
+            'subscription_id'     => $result['subscription']->id,
+            'subscription_status' => $result['subscription']->status,
             'package_name'    => $result['package']->name,
             'term_months'     => $result['term_months'],
             'billed_amount'   => $result['billed_amount'],

@@ -4,7 +4,7 @@ import {
     School as SchoolIcon, UserCheck, Package as PackageIcon, CreditCard,
     Calendar, Globe, CheckCircle2, ChevronRight, ChevronLeft,
     Sparkles, Check, ArrowLeft, Shield, Eye, EyeOff, RefreshCw,
-    Layers, Users, HardDrive, Tag, AlertCircle, ExternalLink
+    Layers, Users, HardDrive, Tag, AlertCircle, AlertTriangle
 } from 'lucide-react';
 import AppLayout from '@/Layouts/AppLayout';
 import { Button } from '@/components/ui/button';
@@ -62,6 +62,8 @@ interface OnboardingSuccessData {
     school_slug: string;
     admin_name: string;
     admin_email: string;
+    subscription_id?: number;
+    subscription_status?: string;
     package_name: string;
     term_months: number;
     billed_amount: number;
@@ -143,7 +145,7 @@ export default function SchoolOnboard({
         admin_phone: '',
         admin_password: '',
 
-        // 3 & 4. Package & Billing
+        // 3 & 4. Package, Billing & Access Activation
         package_id: initialPackage ? initialPackage.id : 0,
         billing_term_months: 6, // default 6mo (5% off)
         coupon_id: '' as string | number,
@@ -151,6 +153,8 @@ export default function SchoolOnboard({
         amount_paid: '0',
         payment_method: 'manual',
         notes: 'Commercial guided onboarding',
+        activate_subscription: false, // Default false for unpaid (amount_paid == 0)
+        activate_unpaid_override: false,
 
         // 5. Academic Year
         academic_year_name: defaults.academic_year_name || 'Academic Year 2026-27',
@@ -161,6 +165,18 @@ export default function SchoolOnboard({
         // 6. Domain
         custom_domain: '',
     });
+
+    // Auto-adjust default activation state based on payment entered
+    function handleAmountPaidChange(val: string) {
+        const num = parseFloat(val) || 0;
+        setData(prev => ({
+            ...prev,
+            amount_paid: val,
+            // If paying full/partial amount, default activation to true; if 0, default to false
+            activate_subscription: num > 0 ? true : false,
+            activate_unpaid_override: num > 0 ? false : prev.activate_unpaid_override,
+        }));
+    }
 
     // Auto-generate Slug & Code from School Name if empty
     function handleNameChange(val: string) {
@@ -178,7 +194,7 @@ export default function SchoolOnboard({
         }));
     }
 
-    // Password generator helper
+    // Password generator helper (in-memory form only; never logged or serialized into flash)
     function generateSecurePassword() {
         const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%&*';
         let pass = '';
@@ -246,6 +262,15 @@ export default function SchoolOnboard({
             balanceDue,
         };
     }, [selectedPackage, selectedPriceRow, data.billing_term_months, data.coupon_id, data.amount_paid, coupons]);
+
+    // Computed effective status
+    const effectiveStatus = useMemo(() => {
+        const received = parseFloat(data.amount_paid) || 0;
+        if (received === 0) {
+            return (data.activate_subscription && data.activate_unpaid_override) ? 'active' : 'suspended';
+        }
+        return data.activate_subscription ? 'active' : 'suspended';
+    }, [data.amount_paid, data.activate_subscription, data.activate_unpaid_override]);
 
     // Server authoritative end date preview
     const calculatedEndDate = useMemo(() => {
@@ -367,7 +392,7 @@ export default function SchoolOnboard({
                                 Commercial School Successfully Onboarded
                             </CardTitle>
                             <CardDescription className="text-slate-600 dark:text-slate-400">
-                                Foundation records, administrator credentials, commercial subscription, and academic calendar are live.
+                                Foundation records, administrator account, commercial subscription, and academic calendar are live.
                             </CardDescription>
                         </CardHeader>
 
@@ -387,9 +412,14 @@ export default function SchoolOnboard({
 
                                 <div className="border-t border-slate-100 dark:border-slate-800 pt-3">
                                     <span className="text-xs text-slate-400 font-medium uppercase tracking-wider">Commercial Subscription</span>
-                                    <p className="font-bold text-slate-900 dark:text-white mt-0.5">
-                                        {onboardingSuccess.package_name} ({onboardingSuccess.term_months} Months Commitment)
-                                    </p>
+                                    <div className="flex items-center gap-2 mt-0.5">
+                                        <p className="font-bold text-slate-900 dark:text-white">
+                                            {onboardingSuccess.package_name} ({onboardingSuccess.term_months}mo)
+                                        </p>
+                                        <Badge className={onboardingSuccess.subscription_status === 'active' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300'}>
+                                            Status: {onboardingSuccess.subscription_status || 'active'}
+                                        </Badge>
+                                    </div>
                                     <p className="text-xs text-slate-500 mt-0.5">
                                         {onboardingSuccess.start_date} to {onboardingSuccess.end_date}
                                     </p>
@@ -400,7 +430,7 @@ export default function SchoolOnboard({
                                     <p className="font-bold text-slate-900 dark:text-white mt-0.5">
                                         Billed: {onboardingSuccess.currency} {Number(onboardingSuccess.billed_amount).toLocaleString()} &bull; Paid: {onboardingSuccess.currency} {Number(onboardingSuccess.amount_paid).toLocaleString()}
                                     </p>
-                                    <p className="text-xs text-emerald-600 dark:text-emerald-400 font-semibold mt-0.5">
+                                    <p className="text-xs text-slate-600 dark:text-slate-400 font-medium mt-0.5">
                                         Balance Due: {onboardingSuccess.currency} {Number(onboardingSuccess.balance_due).toLocaleString()}
                                     </p>
                                 </div>
@@ -731,7 +761,7 @@ export default function SchoolOnboard({
                                         </div>
                                         {errors.admin_password && <p className="text-xs text-red-500">{errors.admin_password}</p>}
                                         <p className="text-[11px] text-slate-400">
-                                            Password will be securely hashed upon creation.
+                                            Password will be securely hashed upon creation and never exposed in logs.
                                         </p>
                                     </div>
 
@@ -961,7 +991,7 @@ export default function SchoolOnboard({
                                                     type="number"
                                                     step="0.01"
                                                     value={data.amount_paid}
-                                                    onChange={e => setData('amount_paid', e.target.value)}
+                                                    onChange={e => handleAmountPaidChange(e.target.value)}
                                                     className={errors.amount_paid ? 'border-red-500' : ''}
                                                 />
                                                 {errors.amount_paid && <p className="text-xs text-red-500">{errors.amount_paid}</p>}
@@ -972,7 +1002,7 @@ export default function SchoolOnboard({
                                                     type="button"
                                                     size="sm"
                                                     variant="outline"
-                                                    onClick={() => setData('amount_paid', '0')}
+                                                    onClick={() => handleAmountPaidChange('0')}
                                                     className="text-xs"
                                                 >
                                                     Unpaid (0)
@@ -981,12 +1011,53 @@ export default function SchoolOnboard({
                                                     type="button"
                                                     size="sm"
                                                     variant="outline"
-                                                    onClick={() => setData('amount_paid', String(pricingBreakdown.billedAmount))}
+                                                    onClick={() => handleAmountPaidChange(String(pricingBreakdown.billedAmount))}
                                                     className="text-xs"
                                                 >
                                                     Full Payment (100%)
                                                 </Button>
                                             </div>
+                                        </div>
+
+                                        {/* Subscription Access Activation Controls */}
+                                        <div className="pt-4 border-t border-slate-200 dark:border-slate-700 space-y-3">
+                                            <div className="flex items-start space-x-2.5">
+                                                <Checkbox
+                                                    id="act_sub"
+                                                    checked={data.activate_subscription}
+                                                    onCheckedChange={(chk) => setData('activate_subscription', !!chk)}
+                                                />
+                                                <div>
+                                                    <Label htmlFor="act_sub" className="text-xs font-bold text-slate-900 dark:text-white cursor-pointer">
+                                                        Activate Subscription Access Immediately
+                                                    </Label>
+                                                    <p className="text-[11px] text-slate-500">
+                                                        {pricingBreakdown.amountReceived > 0
+                                                            ? 'Enabling allows the school admin to log in and use package modules immediately.'
+                                                            : 'Unpaid subscriptions default to Suspended/Inactive until payment is recorded.'}
+                                                    </p>
+                                                </div>
+                                            </div>
+
+                                            {/* Unpaid Override Confirmation */}
+                                            {pricingBreakdown.amountReceived === 0 && data.activate_subscription && (
+                                                <div className="p-3 bg-amber-50 dark:bg-amber-950/40 rounded-lg border border-amber-200 dark:border-amber-800 space-y-2">
+                                                    <div className="flex items-center gap-2 text-xs font-semibold text-amber-800 dark:text-amber-300">
+                                                        <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                                                        Outstanding Unpaid Balance (PKR {pricingBreakdown.billedAmount.toLocaleString()})
+                                                    </div>
+                                                    <div className="flex items-center space-x-2">
+                                                        <Checkbox
+                                                            id="act_unpaid_override"
+                                                            checked={data.activate_unpaid_override}
+                                                            onCheckedChange={(chk) => setData('activate_unpaid_override', !!chk)}
+                                                        />
+                                                        <Label htmlFor="act_unpaid_override" className="text-xs text-amber-900 dark:text-amber-200 cursor-pointer font-medium">
+                                                            Super Admin Confirmation: Activate subscription access despite 0 payment
+                                                        </Label>
+                                                    </div>
+                                                </div>
+                                            )}
                                         </div>
                                     </div>
                                 </CardContent>
@@ -1175,7 +1246,7 @@ export default function SchoolOnboard({
                                         {/* Commercial Package & Billing Summary */}
                                         <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700 space-y-2 md:col-span-2">
                                             <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                                                <CreditCard className="w-3.5 h-3.5" /> Commercial Subscription & Payment
+                                                <CreditCard className="w-3.5 h-3.5" /> Commercial Subscription & Access
                                             </h4>
                                             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-1">
                                                 <div>
@@ -1200,6 +1271,13 @@ export default function SchoolOnboard({
                                                     </p>
                                                     <span className="text-[10px] text-slate-500">Paid: {pricingBreakdown.amountReceived.toLocaleString()}</span>
                                                 </div>
+                                            </div>
+
+                                            <div className="pt-2 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between text-xs">
+                                                <span className="text-slate-500">Initial Subscription Access Status:</span>
+                                                <Badge className={effectiveStatus === 'active' ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-950 dark:text-emerald-300 font-bold' : 'bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-300 font-bold'}>
+                                                    {effectiveStatus === 'active' ? 'Active Access' : 'Suspended (Awaiting Payment)'}
+                                                </Badge>
                                             </div>
                                         </div>
                                     </div>

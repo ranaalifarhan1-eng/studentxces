@@ -15,6 +15,11 @@ class AppServiceProvider extends ServiceProvider
             \App\Services\DnsResolverInterface::class,
             \App\Services\SystemDnsResolver::class
         );
+
+        $this->app->bind(
+            \App\Services\HttpsProbeInterface::class,
+            \App\Services\SystemHttpsProbe::class
+        );
     }
 
     /**

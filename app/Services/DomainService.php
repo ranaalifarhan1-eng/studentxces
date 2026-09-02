@@ -239,4 +239,144 @@ class DomainService
             }
         });
     }
+
+    /**
+     * Activate a domain for production traffic after rigorous DNS and HTTPS/TLS validation.
+     *
+     * @param SchoolDomain $domain
+     * @param HttpsProbeInterface $httpsProbe
+     * @return array{success: bool, message: string, domain?: SchoolDomain}
+     */
+    public function activateDomain(SchoolDomain $domain, HttpsProbeInterface $httpsProbe): array
+    {
+        // 1. Precondition: Domain must be in verified or active state
+        if (! in_array($domain->status, [SchoolDomain::STATUS_VERIFIED, SchoolDomain::STATUS_ACTIVE], true)) {
+            return [
+                'success' => false,
+                'message' => "Domain must be in 'verified' or 'active' status before activation. Current status: '{$domain->status}'.",
+            ];
+        }
+
+        // 2. Precondition: Owning school must exist and be active
+        $school = $domain->school;
+        if (! $school || $school->status !== 'active') {
+            return [
+                'success' => false,
+                'message' => "The owning school for this domain is inactive or does not exist.",
+            ];
+        }
+
+        // 3. Re-verify DNS ownership immediately before activation
+        if ($domain->isCustom()) {
+            $dnsOk = $this->verifyDomain($domain);
+            if (! $dnsOk) {
+                return [
+                    'success' => false,
+                    'message' => "DNS re-verification failed. Ensure CNAME or TXT challenge records are configured correctly.",
+                ];
+            }
+        }
+
+        // 4. Validate HTTPS / TLS handshake and certificate
+        $tlsResult = $httpsProbe->probe($domain->hostname);
+        if (! $tlsResult['success']) {
+            return [
+                'success' => false,
+                'message' => "HTTPS TLS probe failed: {$tlsResult['message']}",
+            ];
+        }
+
+        // 5. Apply activation transition in transaction
+        return DB::transaction(function () use ($domain, $school, $tlsResult) {
+            $lockedDomain = SchoolDomain::where('id', $domain->id)->lockForUpdate()->first();
+
+            $prevStatus = $lockedDomain->status;
+            $prevSsl    = $lockedDomain->ssl_status;
+
+            $lockedDomain->update([
+                'status'     => SchoolDomain::STATUS_ACTIVE,
+                'ssl_status' => SchoolDomain::SSL_ACTIVE,
+            ]);
+
+            // Platform audit logging (hidden from tenant audit views)
+            if (function_exists('activity')) {
+                activity('platform')
+                    ->performedOn($lockedDomain)
+                    ->withProperties([
+                        'hostname'        => $lockedDomain->hostname,
+                        'school_id'       => $lockedDomain->school_id,
+                        'school_name'     => $school->name,
+                        'previous_status' => $prevStatus,
+                        'new_status'      => SchoolDomain::STATUS_ACTIVE,
+                        'previous_ssl'    => $prevSsl,
+                        'new_ssl'         => SchoolDomain::SSL_ACTIVE,
+                        'issuer'          => $tlsResult['issuer'] ?? null,
+                        'valid_to'        => $tlsResult['valid_to'] ?? null,
+                        'action'          => 'domain_activated',
+                    ])
+                    ->log("Domain [{$lockedDomain->hostname}] activated for school [{$school->name}] (#{$school->id})");
+            }
+
+            return [
+                'success' => true,
+                'message' => "Domain [{$lockedDomain->hostname}] successfully activated with active SSL.",
+                'domain'  => $lockedDomain->fresh(),
+            ];
+        });
+    }
+
+    /**
+     * Deactivate a domain, setting its status to disabled and removing it from tenant resolution.
+     *
+     * @param SchoolDomain $domain
+     * @return array{success: bool, message: string, domain?: SchoolDomain}
+     */
+    public function deactivateDomain(SchoolDomain $domain): array
+    {
+        return DB::transaction(function () use ($domain) {
+            $lockedDomain = SchoolDomain::where('id', $domain->id)->lockForUpdate()->first();
+
+            $prevStatus = $lockedDomain->status;
+            $wasPrimary = $lockedDomain->is_primary;
+            $schoolId   = $lockedDomain->school_id;
+            $school     = $lockedDomain->school;
+
+            $lockedDomain->update([
+                'status'     => SchoolDomain::STATUS_DISABLED,
+                'is_primary' => false,
+            ]);
+
+            if ($wasPrimary) {
+                $fallback = SchoolDomain::where('school_id', $schoolId)
+                    ->where('type', SchoolDomain::TYPE_DEFAULT)
+                    ->where('status', SchoolDomain::STATUS_ACTIVE)
+                    ->first();
+
+                if ($fallback) {
+                    $fallback->update(['is_primary' => true]);
+                }
+            }
+
+            // Platform audit logging
+            if (function_exists('activity')) {
+                activity('platform')
+                    ->performedOn($lockedDomain)
+                    ->withProperties([
+                        'hostname'        => $lockedDomain->hostname,
+                        'school_id'       => $lockedDomain->school_id,
+                        'school_name'     => $school?->name,
+                        'previous_status' => $prevStatus,
+                        'new_status'      => SchoolDomain::STATUS_DISABLED,
+                        'action'          => 'domain_deactivated',
+                    ])
+                    ->log("Domain [{$lockedDomain->hostname}] deactivated for school [{$school?->name}] (#{$schoolId})");
+            }
+
+            return [
+                'success' => true,
+                'message' => "Domain [{$lockedDomain->hostname}] deactivated successfully.",
+                'domain'  => $lockedDomain->fresh(),
+            ];
+        });
+    }
 }

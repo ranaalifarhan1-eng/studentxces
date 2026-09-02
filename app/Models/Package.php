@@ -11,8 +11,8 @@ class Package extends Model
     use SoftDeletes;
 
     protected $fillable = [
-        'name', 'slug', 'description', 'price_monthly', 'price_yearly',
-        'max_students', 'max_staff', 'storage_gb', 'is_active', 'features',
+        'name', 'slug', 'badge', 'description', 'price_monthly', 'price_yearly',
+        'currency', 'max_students', 'max_staff', 'storage_gb', 'is_active', 'features',
     ];
 
     protected $casts = [
@@ -22,6 +22,11 @@ class Package extends Model
         'price_yearly'  => 'decimal:2',
     ];
 
+    public function prices(): HasMany
+    {
+        return $this->hasMany(PackagePrice::class);
+    }
+
     public function modules(): HasMany
     {
         return $this->hasMany(PackageModule::class);
@@ -30,5 +35,13 @@ class Package extends Model
     public function subscriptions(): HasMany
     {
         return $this->hasMany(SchoolSubscription::class);
+    }
+
+    /**
+     * Get a specific active pricing term (3, 6, or 12 months).
+     */
+    public function getTermPrice(int $months): ?PackagePrice
+    {
+        return $this->prices->firstWhere('term_months', $months);
     }
 }

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\SuperAdmin;
 use App\Http\Controllers\Controller;
 use App\Models\Package;
 use App\Models\PackageModule;
+use App\Services\CommercialPricingService;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
@@ -19,6 +20,10 @@ class PackageController extends Controller
         'homework', 'communication', 'reports', 'hr',
     ];
 
+    public function __construct(
+        protected CommercialPricingService $pricingService
+    ) {}
+
     public static function availableModules(): array
     {
         return config('modules.canonical', self::AVAILABLE_MODULES);
@@ -28,13 +33,14 @@ class PackageController extends Controller
     {
         $packages = Package::withTrashed(false)
             ->withCount('subscriptions')
-            ->with('modules')
+            ->with(['modules', 'prices' => fn ($q) => $q->orderBy('term_months', 'asc')])
             ->latest()
             ->get();
 
         return Inertia::render('SuperAdmin/Packages/Index', [
             'packages'         => $packages,
             'availableModules' => self::availableModules(),
+            'canonicalTerms'   => CommercialPricingService::CANONICAL_TERMS,
         ]);
     }
 
@@ -42,24 +48,31 @@ class PackageController extends Controller
     {
         $availableModules = self::availableModules();
         $data = $request->validate([
-            'name'          => 'required|string|max:100',
-            'description'   => 'nullable|string|max:500',
-            'price_monthly' => 'required|numeric|min:0',
-            'price_yearly'  => 'required|numeric|min:0',
-            'max_students'  => 'required|integer|min:0',
-            'max_staff'     => 'required|integer|min:0',
-            'storage_gb'    => 'required|integer|min:1',
-            'is_active'     => 'boolean',
-            'modules'       => 'array',
-            'modules.*'     => 'string|in:' . implode(',', $availableModules),
+            'name'               => 'required|string|max:100',
+            'badge'              => 'nullable|string|max:50',
+            'description'        => 'nullable|string|max:500',
+            'base_monthly_price' => 'nullable|numeric|min:0',
+            'price_monthly'      => 'nullable|numeric|min:0',
+            'currency'           => 'nullable|string|max:10',
+            'max_students'       => 'required|integer|min:0',
+            'max_staff'          => 'required|integer|min:0',
+            'storage_gb'         => 'required|integer|min:1',
+            'is_active'          => 'boolean',
+            'modules'            => 'array',
+            'modules.*'          => 'string|in:' . implode(',', $availableModules),
         ]);
+
+        $baseMonthly = (float) ($data['base_monthly_price'] ?? $data['price_monthly'] ?? 0);
+        $currency    = $data['currency'] ?? 'PKR';
 
         $package = Package::create([
             'name'          => $data['name'],
             'slug'          => Str::slug($data['name']),
+            'badge'         => $data['badge'] ?? null,
             'description'   => $data['description'] ?? null,
-            'price_monthly' => $data['price_monthly'],
-            'price_yearly'  => $data['price_yearly'],
+            'currency'      => $currency,
+            'price_monthly' => $baseMonthly,
+            'price_yearly'  => round($baseMonthly * 12 * 0.90, 2),
             'max_students'  => $data['max_students'],
             'max_staff'     => $data['max_staff'],
             'storage_gb'    => $data['storage_gb'],
@@ -70,6 +83,8 @@ class PackageController extends Controller
             PackageModule::create(['package_id' => $package->id, 'module_slug' => $slug]);
         }
 
+        $this->pricingService->syncPackagePrices($package, $baseMonthly, $currency);
+
         return back()->with('success', 'Package created.');
     }
 
@@ -77,23 +92,30 @@ class PackageController extends Controller
     {
         $availableModules = self::availableModules();
         $data = $request->validate([
-            'name'          => 'required|string|max:100',
-            'description'   => 'nullable|string|max:500',
-            'price_monthly' => 'required|numeric|min:0',
-            'price_yearly'  => 'required|numeric|min:0',
-            'max_students'  => 'required|integer|min:0',
-            'max_staff'     => 'required|integer|min:0',
-            'storage_gb'    => 'required|integer|min:1',
-            'is_active'     => 'boolean',
-            'modules'       => 'array',
-            'modules.*'     => 'string|in:' . implode(',', $availableModules),
+            'name'               => 'required|string|max:100',
+            'badge'              => 'nullable|string|max:50',
+            'description'        => 'nullable|string|max:500',
+            'base_monthly_price' => 'nullable|numeric|min:0',
+            'price_monthly'      => 'nullable|numeric|min:0',
+            'currency'           => 'nullable|string|max:10',
+            'max_students'       => 'required|integer|min:0',
+            'max_staff'          => 'required|integer|min:0',
+            'storage_gb'         => 'required|integer|min:1',
+            'is_active'          => 'boolean',
+            'modules'            => 'array',
+            'modules.*'          => 'string|in:' . implode(',', $availableModules),
         ]);
+
+        $baseMonthly = (float) ($data['base_monthly_price'] ?? $data['price_monthly'] ?? $package->price_monthly);
+        $currency    = $data['currency'] ?? $package->currency ?? 'PKR';
 
         $package->update([
             'name'          => $data['name'],
+            'badge'         => $data['badge'] ?? null,
             'description'   => $data['description'] ?? null,
-            'price_monthly' => $data['price_monthly'],
-            'price_yearly'  => $data['price_yearly'],
+            'currency'      => $currency,
+            'price_monthly' => $baseMonthly,
+            'price_yearly'  => round($baseMonthly * 12 * 0.90, 2),
             'max_students'  => $data['max_students'],
             'max_staff'     => $data['max_staff'],
             'storage_gb'    => $data['storage_gb'],
@@ -104,6 +126,8 @@ class PackageController extends Controller
         foreach ($data['modules'] ?? [] as $slug) {
             PackageModule::create(['package_id' => $package->id, 'module_slug' => $slug]);
         }
+
+        $this->pricingService->syncPackagePrices($package, $baseMonthly, $currency);
 
         return back()->with('success', 'Package updated.');
     }

@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent } from '@/components/ui/card';
 import { DollarSign, Zap, Settings2, CheckCircle2, Clock } from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
 import type { PageProps, PaginatedResponse } from '@/Types';
 
 interface Department { id: number; name: string; }
@@ -29,15 +30,17 @@ interface Props {
 }
 
 const STATUS_STYLE: Record<string, string> = {
-    draft:     'bg-slate-100 text-slate-600',
-    generated: 'bg-blue-100 text-blue-700',
     paid:      'bg-green-100 text-green-700',
+    generated: 'bg-indigo-100 text-indigo-700',
+    draft:     'bg-slate-100 text-slate-600',
 };
 
-export default function PayrollPage({ payrolls, departments, filters, stats }: Props) {
+export default function PayrollIndex({ payrolls, departments, filters, stats }: Props) {
     const { flash } = usePage<PageProps>().props;
+    const { format: formatMoney } = useCurrency();
     const [genOpen, setGenOpen] = useState(false);
-    const [genForm, setGenForm] = useState({ month_year: new Date().toISOString().slice(0, 7), department_id: '', working_days: '26' });
+    const [genMonth, setGenMonth] = useState(new Date().toISOString().slice(0, 7));
+    const [genDept, setGenDept] = useState('');
     const [generating, setGenerating] = useState(false);
 
     function applyFilter(key: string, value: string) {
@@ -46,29 +49,26 @@ export default function PayrollPage({ payrolls, departments, filters, stats }: P
 
     function handleGenerate() {
         setGenerating(true);
-        router.post('/school/hr/payroll/generate', genForm, {
-            preserveScroll: true,
-            onSuccess: () => { setGenOpen(false); setGenerating(false); },
-            onError: () => setGenerating(false),
+        router.post('/school/hr/payroll/generate', { month_year: genMonth, department_id: genDept || undefined }, {
+            onFinish: () => { setGenerating(false); setGenOpen(false); },
         });
     }
 
-    function markPaid(p: PayrollRow) {
-        if (!confirm(`Mark payroll for ${p.staff?.first_name} ${p.staff?.last_name} as paid?`)) return;
-        router.put(`/school/hr/payroll/${p.id}/paid`, {}, { preserveScroll: true });
+    function handleMarkPaid(id: number) {
+        router.put(`/school/hr/payroll/${id}/pay`);
     }
 
     return (
-        <AppLayout title="Payroll">
+        <AppLayout title="Payroll Management">
             <div className="space-y-6">
                 <div className="flex items-center justify-between">
                     <div>
                         <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Payroll</h1>
-                        <p className="text-sm text-slate-500 mt-0.5">{payrolls.meta?.total ?? 0} payroll records</p>
+                        <p className="text-sm text-slate-500 mt-0.5">Staff salary generation and disbursement</p>
                     </div>
                     <div className="flex gap-2">
                         <Link href="/school/hr/salary-structure">
-                            <Button variant="outline" className="inline-flex items-center gap-2"><Settings2 className="w-4 h-4" /> Salary Structure</Button>
+                            <Button variant="outline" className="inline-flex items-center gap-2"><Settings2 className="w-4 h-4" /> Salary Structures</Button>
                         </Link>
                         <Button onClick={() => setGenOpen(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white inline-flex items-center gap-2">
                             <Zap className="w-4 h-4" /> Generate Payroll
@@ -83,7 +83,7 @@ export default function PayrollPage({ payrolls, departments, filters, stats }: P
                 {/* Stats */}
                 <div className="grid grid-cols-3 gap-4 max-w-lg">
                     {[
-                        { label: 'Net Payable', value: `৳${stats.total_net?.toLocaleString() ?? 0}`, color: 'text-indigo-600', icon: DollarSign },
+                        { label: 'Net Payable', value: formatMoney(stats.total_net ?? 0), color: 'text-indigo-600', icon: DollarSign },
                         { label: 'Paid', value: stats.paid_count, color: 'text-green-600', icon: CheckCircle2 },
                         { label: 'Pending', value: stats.draft_count, color: 'text-amber-600', icon: Clock },
                     ].map(({ label, value, color, icon: Icon }) => (
@@ -151,10 +151,10 @@ export default function PayrollPage({ payrolls, departments, filters, stats }: P
                                         <p className="text-xs text-slate-400">{p.staff?.emp_id} · {p.staff?.department?.name}</p>
                                     </TableCell>
                                     <TableCell className="text-sm text-slate-600 dark:text-slate-400">{p.month_year}</TableCell>
-                                    <TableCell className="text-right text-sm">৳{Number(p.basic_salary).toLocaleString()}</TableCell>
-                                    <TableCell className="text-right text-sm text-green-600">৳{Number(p.total_allowances).toLocaleString()}</TableCell>
-                                    <TableCell className="text-right text-sm text-red-600">৳{Number(p.total_deductions).toLocaleString()}</TableCell>
-                                    <TableCell className="text-right font-bold text-indigo-600">৳{Number(p.net_salary).toLocaleString()}</TableCell>
+                                    <TableCell className="text-right text-sm">{formatMoney(p.basic_salary)}</TableCell>
+                                    <TableCell className="text-right text-sm text-green-600">{formatMoney(p.total_allowances)}</TableCell>
+                                    <TableCell className="text-right text-sm text-red-600">{formatMoney(p.total_deductions)}</TableCell>
+                                    <TableCell className="text-right font-bold text-indigo-600">{formatMoney(p.net_salary)}</TableCell>
                                     <TableCell className="text-center text-sm text-slate-500">{p.present_days}/{p.working_days}</TableCell>
                                     <TableCell>
                                         <Badge className={`border-0 text-xs capitalize ${STATUS_STYLE[p.status] ?? ''}`}>{p.status}</Badge>
@@ -165,9 +165,7 @@ export default function PayrollPage({ payrolls, departments, filters, stats }: P
                                                 <Button size="sm" variant="outline" className="text-xs h-7">Slip</Button>
                                             </Link>
                                             {p.status !== 'paid' && (
-                                                <Button size="sm" className="text-xs h-7 bg-green-600 hover:bg-green-700 text-white" onClick={() => markPaid(p)}>
-                                                    Mark Paid
-                                                </Button>
+                                                <Button size="sm" onClick={() => handleMarkPaid(p.id)} className="text-xs h-7 bg-green-600 hover:bg-green-700 text-white">Pay</Button>
                                             )}
                                         </div>
                                     </TableCell>

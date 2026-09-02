@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ArrowLeft, Search, User, DollarSign } from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
 import type { SchoolClass, PageProps } from '@/Types';
 
 interface Student {
@@ -27,9 +28,10 @@ interface Props {
 
 export default function CollectFee({ student, structures, classes }: Props) {
     const { flash } = usePage<PageProps>().props;
+    const { currency, format: formatMoney } = useCurrency();
     const [searchId, setSearchId] = useState('');
 
-    const { data, setData, post, processing, errors } = useForm({
+    const { data, setData, post, processing, errors, reset } = useForm({
         student_id:       student?.id ? String(student.id) : '',
         fee_structure_id: '',
         amount_due:       '',
@@ -37,33 +39,33 @@ export default function CollectFee({ student, structures, classes }: Props) {
         discount:         '0',
         fine:             '0',
         payment_date:     new Date().toISOString().split('T')[0],
-        month_year:       '',
         method:           'cash',
+        month_year:       new Date().toISOString().slice(0, 7),
         note:             '',
     });
 
-    function searchStudent() {
+    const netDue = Number(data.amount_due || 0) + Number(data.fine || 0) - Number(data.discount || 0);
+    const balance = Math.max(0, netDue - Number(data.amount_paid || 0));
+
+    function doSearch(e: React.FormEvent) {
+        e.preventDefault();
         if (!searchId.trim()) return;
-        router.get('/school/fees/payments/collect', { student_id: searchId }, { preserveScroll: true });
+        router.get('/school/fees/payments/collect', { student_id: searchId.trim() }, { preserveScroll: true });
     }
 
-    function onStructureChange(structId: string) {
-        setData('fee_structure_id', structId);
-        const struct = structures.find(s => String(s.id) === structId);
-        if (struct) setData('amount_due', struct.amount);
+    function onStructureChange(id: string) {
+        setData('fee_structure_id', id);
+        const s = structures.find(x => String(x.id) === id);
+        if (s) {
+            setData(d => ({ ...d, fee_structure_id: id, amount_due: String(s.amount) }));
+        }
     }
-
-    const balance = (() => {
-        const due    = Number(data.amount_due) || 0;
-        const paid   = Number(data.amount_paid) || 0;
-        const disc   = Number(data.discount) || 0;
-        const fine   = Number(data.fine) || 0;
-        return Math.max(0, due + fine - disc - paid);
-    })();
 
     function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
-        post('/school/fees/payments');
+        post('/school/fees/payments', {
+            onSuccess: () => reset(),
+        });
     }
 
     return (
@@ -85,18 +87,17 @@ export default function CollectFee({ student, structures, classes }: Props) {
                 <Card className="border-slate-200 dark:border-slate-800">
                     <CardHeader className="pb-3"><CardTitle className="text-base flex items-center gap-2"><Search className="w-4 h-4" /> Find Student</CardTitle></CardHeader>
                     <CardContent>
-                        <div className="flex gap-2">
+                        <form onSubmit={doSearch} className="flex gap-2">
                             <Input
                                 placeholder="Student ID (e.g. STU-2026-0001)"
                                 value={searchId}
                                 onChange={e => setSearchId(e.target.value)}
-                                onKeyDown={e => e.key === 'Enter' && searchStudent()}
                                 className="flex-1"
                             />
-                            <Button type="button" onClick={searchStudent} variant="outline" className="inline-flex items-center gap-2">
+                            <Button type="submit" variant="outline" className="inline-flex items-center gap-2">
                                 <Search className="w-4 h-4" /> Search
                             </Button>
-                        </div>
+                        </form>
                     </CardContent>
                 </Card>
 
@@ -129,7 +130,7 @@ export default function CollectFee({ student, structures, classes }: Props) {
                                         <SelectContent>
                                             {structures.map(s => (
                                                 <SelectItem key={s.id} value={String(s.id)}>
-                                                    {s.fee_category?.name} — ৳{Number(s.amount).toLocaleString()} ({s.frequency}) · {s.academic_year}
+                                                    {s.fee_category?.name} — {formatMoney(s.amount)} ({s.frequency}) · {s.academic_year}
                                                 </SelectItem>
                                             ))}
                                         </SelectContent>
@@ -139,7 +140,7 @@ export default function CollectFee({ student, structures, classes }: Props) {
 
                                 <div className="grid grid-cols-2 gap-3">
                                     <div className="space-y-1.5">
-                                        <Label>Amount Due (৳) <span className="text-red-500">*</span></Label>
+                                        <Label>Amount Due ({currency}) <span className="text-red-500">*</span></Label>
                                         <Input type="number" min="0" step="0.01" value={data.amount_due} onChange={e => setData('amount_due', e.target.value)} />
                                         {errors.amount_due && <p className="text-xs text-red-500">{errors.amount_due}</p>}
                                     </div>
@@ -151,11 +152,11 @@ export default function CollectFee({ student, structures, classes }: Props) {
 
                                 <div className="grid grid-cols-2 gap-3">
                                     <div className="space-y-1.5">
-                                        <Label>Discount (৳)</Label>
+                                        <Label>Discount ({currency})</Label>
                                         <Input type="number" min="0" step="0.01" value={data.discount} onChange={e => setData('discount', e.target.value)} />
                                     </div>
                                     <div className="space-y-1.5">
-                                        <Label>Fine (৳)</Label>
+                                        <Label>Fine ({currency})</Label>
                                         <Input type="number" min="0" step="0.01" value={data.fine} onChange={e => setData('fine', e.target.value)} />
                                     </div>
                                 </div>
@@ -164,20 +165,20 @@ export default function CollectFee({ student, structures, classes }: Props) {
                                 <div className="rounded-lg bg-slate-50 dark:bg-slate-900 px-4 py-3 flex items-center justify-between">
                                     <div className="text-sm text-slate-500">Net Due</div>
                                     <div className="font-bold text-lg text-slate-900 dark:text-white">
-                                        ৳{(Number(data.amount_due || 0) + Number(data.fine || 0) - Number(data.discount || 0)).toLocaleString()}
+                                        {formatMoney(netDue)}
                                     </div>
                                 </div>
 
                                 <div className="grid grid-cols-2 gap-3">
                                     <div className="space-y-1.5">
-                                        <Label>Amount Paid (৳) <span className="text-red-500">*</span></Label>
+                                        <Label>Amount Paid ({currency}) <span className="text-red-500">*</span></Label>
                                         <Input type="number" min="0" step="0.01" value={data.amount_paid} onChange={e => setData('amount_paid', e.target.value)} />
                                         {errors.amount_paid && <p className="text-xs text-red-500">{errors.amount_paid}</p>}
                                     </div>
                                     <div className="space-y-1.5">
                                         <Label>Balance</Label>
                                         <div className={`h-10 rounded-md border px-3 flex items-center font-semibold ${balance > 0 ? 'text-red-600 border-red-200 bg-red-50 dark:bg-red-950/20' : 'text-green-600 border-green-200 bg-green-50 dark:bg-green-950/20'}`}>
-                                            {balance > 0 ? `৳${balance.toLocaleString()}` : 'Fully Paid'}
+                                            {balance > 0 ? formatMoney(balance) : 'Fully Paid'}
                                         </div>
                                     </div>
                                 </div>
@@ -195,9 +196,8 @@ export default function CollectFee({ student, structures, classes }: Props) {
                                                 <SelectItem value="cash">Cash</SelectItem>
                                                 <SelectItem value="card">Card</SelectItem>
                                                 <SelectItem value="online">Online</SelectItem>
-                                                <SelectItem value="bkash">bKash</SelectItem>
-                                                <SelectItem value="nagad">Nagad</SelectItem>
-                                                <SelectItem value="rocket">Rocket</SelectItem>
+                                                <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                                                <SelectItem value="cheque">Cheque</SelectItem>
                                             </SelectContent>
                                         </Select>
                                     </div>

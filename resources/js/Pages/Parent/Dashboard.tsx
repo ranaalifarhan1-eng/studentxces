@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { GraduationCap, DollarSign, Bell, TrendingUp, Users, User, CheckCircle, AlertTriangle } from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
 
 interface Guardian { id: number; name: string; phone: string; email: string | null; }
 interface ChildAttendance { total: number; present: number; absent: number; percentage: number; }
@@ -38,7 +39,7 @@ function AttendanceBar({ pct, label }: { pct: number; label: string }) {
     );
 }
 
-function ChildCard({ child }: { child: Child }) {
+function ChildCard({ child, formatMoney }: { child: Child; formatMoney: (n: number | string | null | undefined) => string }) {
     return (
         <Card>
             <CardContent className="p-5 space-y-4">
@@ -71,12 +72,12 @@ function ChildCard({ child }: { child: Child }) {
                     <div className="flex items-center justify-between">
                         <div>
                             <p className="text-xs text-slate-500">Total Paid</p>
-                            <p className="font-semibold text-green-600">৳{child.fees.total_paid.toLocaleString()}</p>
+                            <p className="font-semibold text-green-600">{formatMoney(child.fees.total_paid)}</p>
                         </div>
                         <div className="text-right">
                             <p className="text-xs text-slate-500">Balance Due</p>
                             <p className={cn('font-semibold', child.fees.balance > 0 ? 'text-red-600' : 'text-green-600')}>
-                                {child.fees.balance > 0 ? `৳${child.fees.balance.toLocaleString()}` : 'Clear'}
+                                {child.fees.balance > 0 ? formatMoney(child.fees.balance) : 'Clear'}
                             </p>
                         </div>
                     </div>
@@ -124,6 +125,8 @@ function ChildCard({ child }: { child: Child }) {
 }
 
 export default function ParentDashboard({ linked, guardian, children, announcements }: Props) {
+    const { format: formatMoney } = useCurrency();
+
     if (!linked || !guardian) {
         return (
             <AppLayout title="Parent Dashboard">
@@ -158,7 +161,7 @@ export default function ParentDashboard({ linked, guardian, children, announceme
                                 <AlertTriangle className="w-4 h-4" />
                                 <div>
                                     <p className="text-xs text-white/80">Total Due</p>
-                                    <p className="font-bold">৳{totalDue.toLocaleString()}</p>
+                                    <p className="font-bold">{formatMoney(totalDue)}</p>
                                 </div>
                             </div>
                         ) : (
@@ -176,7 +179,9 @@ export default function ParentDashboard({ linked, guardian, children, announceme
                         My Children ({children.length})
                     </h2>
                     <div className={cn('grid gap-6', children.length === 1 ? 'grid-cols-1 max-w-lg' : 'grid-cols-1 md:grid-cols-2')}>
-                        {children.map(child => <ChildCard key={child.id} child={child} />)}
+                        {children.map(child => (
+                            <ChildCard key={child.id} child={child} formatMoney={formatMoney} />
+                        ))}
                     </div>
                 </div>
 

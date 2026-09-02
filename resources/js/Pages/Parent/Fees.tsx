@@ -2,6 +2,7 @@ import AppLayout from '@/Layouts/AppLayout';
 import { cn } from '@/lib/utils';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DollarSign, AlertTriangle, CheckCircle } from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
 
 interface Payment { month: string; due: number; paid: number; balance: number; status: string; payment_date: string | null; }
 interface Child { id: number; full_name: string; class: string | null; total_due: number; total_paid: number; balance: number; payments: Payment[]; }
@@ -13,6 +14,8 @@ const statusColor: Record<string, string> = {
 };
 
 export default function ParentFees({ linked, children }: Props) {
+    const { format: formatMoney } = useCurrency();
+
     if (!linked) {
         return (
             <AppLayout title="Fee Status">
@@ -34,17 +37,17 @@ export default function ParentFees({ linked, children }: Props) {
                         <div className="grid grid-cols-3 gap-3 mb-4">
                             <Card><CardContent className="p-3 text-center">
                                 <p className="text-[11px] text-slate-500 mb-1">Total Due</p>
-                                <p className="font-bold text-slate-800 dark:text-white">৳{child.total_due.toLocaleString()}</p>
+                                <p className="font-bold text-slate-800 dark:text-white">{formatMoney(child.total_due)}</p>
                             </CardContent></Card>
                             <Card><CardContent className="p-3 text-center">
                                 <p className="text-[11px] text-slate-500 mb-1">Total Paid</p>
-                                <p className="font-bold text-green-600">৳{child.total_paid.toLocaleString()}</p>
+                                <p className="font-bold text-green-600">{formatMoney(child.total_paid)}</p>
                             </CardContent></Card>
                             <Card className={child.balance > 0 ? 'border-red-200' : 'border-green-200'}>
                                 <CardContent className="p-3 text-center">
                                     <p className="text-[11px] text-slate-500 mb-1">Balance</p>
                                     <p className={cn('font-bold', child.balance > 0 ? 'text-red-600' : 'text-green-600')}>
-                                        {child.balance > 0 ? `৳${child.balance.toLocaleString()}` : 'Clear'}
+                                        {child.balance > 0 ? formatMoney(child.balance) : 'Clear'}
                                     </p>
                                 </CardContent>
                             </Card>
@@ -68,8 +71,8 @@ export default function ParentFees({ linked, children }: Props) {
                                             {child.payments.map((p, i) => (
                                                 <tr key={i}>
                                                     <td className="px-4 py-2 text-slate-700 dark:text-slate-300">{p.month}</td>
-                                                    <td className="px-4 py-2 text-right text-slate-600">৳{p.due.toLocaleString()}</td>
-                                                    <td className="px-4 py-2 text-right text-green-600">৳{p.paid.toLocaleString()}</td>
+                                                    <td className="px-4 py-2 text-right text-slate-600">{formatMoney(p.due)}</td>
+                                                    <td className="px-4 py-2 text-right text-green-600">{formatMoney(p.paid)}</td>
                                                     <td className="px-4 py-2 text-center">
                                                         <span className={cn('text-[10px] font-medium px-2 py-0.5 rounded-full capitalize', statusColor[p.status] ?? 'bg-slate-100 text-slate-600')}>{p.status}</span>
                                                     </td>

@@ -127,26 +127,32 @@ export default function CreateSchool() {
                         <CardContent className="grid grid-cols-3 gap-4">
                             <div className="space-y-1.5">
                                 <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">Timezone</Label>
-                                <Select defaultValue="Asia/Dhaka" onValueChange={(v) => setValue('timezone', v)}>
+                                <Select defaultValue="Asia/Karachi" onValueChange={(v) => setValue('timezone', v)}>
                                     <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                                     <SelectContent>
+                                        <SelectItem value="Asia/Karachi">Asia/Karachi (PKT)</SelectItem>
                                         <SelectItem value="Asia/Dhaka">Asia/Dhaka (BST)</SelectItem>
                                         <SelectItem value="Asia/Kolkata">Asia/Kolkata (IST)</SelectItem>
+                                        <SelectItem value="Asia/Dubai">Asia/Dubai (GST)</SelectItem>
                                         <SelectItem value="UTC">UTC</SelectItem>
-                                        <SelectItem value="America/New_York">America/New_York</SelectItem>
-                                        <SelectItem value="Europe/London">Europe/London</SelectItem>
+                                        <SelectItem value="America/New_York">America/New_York (EST)</SelectItem>
+                                        <SelectItem value="Europe/London">Europe/London (GMT)</SelectItem>
                                     </SelectContent>
                                 </Select>
                             </div>
                             <div className="space-y-1.5">
                                 <Label className="text-sm font-medium text-slate-700 dark:text-slate-300">Currency</Label>
-                                <Select defaultValue="BDT" onValueChange={(v) => setValue('currency', v)}>
+                                <Select defaultValue="PKR" onValueChange={(v) => setValue('currency', v)}>
                                     <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
                                     <SelectContent>
-                                        <SelectItem value="BDT">BDT (৳)</SelectItem>
+                                        <SelectItem value="PKR">PKR (Rs)</SelectItem>
                                         <SelectItem value="USD">USD ($)</SelectItem>
-                                        <SelectItem value="INR">INR (₹)</SelectItem>
+                                        <SelectItem value="EUR">EUR (€)</SelectItem>
                                         <SelectItem value="GBP">GBP (£)</SelectItem>
+                                        <SelectItem value="INR">INR (₹)</SelectItem>
+                                        <SelectItem value="BDT">BDT (৳)</SelectItem>
+                                        <SelectItem value="AED">AED (AED)</SelectItem>
+                                        <SelectItem value="SAR">SAR (SAR)</SelectItem>
                                     </SelectContent>
                                 </Select>
                             </div>

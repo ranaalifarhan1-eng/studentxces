@@ -1,6 +1,7 @@
 import AppLayout from '@/Layouts/AppLayout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Users, UserCog, CalendarCheck, DollarSign, Clock, AlertCircle } from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
 import {
     BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
     LineChart, Line, Legend,
@@ -43,6 +44,7 @@ function KpiCard({ title, value, sub, icon: Icon, color }: { title: string; valu
 
 export default function Dashboard({ role, totalStudents, totalStaff, attendancePct, monthFees, pendingFees, pendingHomework, todayCollection, feeChart, attChart, recentActivity, schools }: Props) {
     const fmt = (n: number) => new Intl.NumberFormat().format(n);
+    const { format: formatMoney } = useCurrency();
 
     return (
         <AppLayout title="Reports Dashboard">
@@ -58,19 +60,19 @@ export default function Dashboard({ role, totalStudents, totalStaff, attendanceP
                         <>
                             <KpiCard title="Total Schools"   value={schools ?? 0}          icon={Users}        color="bg-indigo-500" />
                             <KpiCard title="Total Students"  value={fmt(totalStudents)}     icon={Users}        color="bg-green-500" />
-                            <KpiCard title="Total Revenue"   value={`$${fmt(monthFees)}`}   icon={DollarSign}   color="bg-blue-500" />
+                            <KpiCard title="Total Revenue"   value={formatMoney(monthFees)} icon={DollarSign}   color="bg-blue-500" />
                         </>
                     ) : (
                         <>
                             <KpiCard title="Total Students"  value={fmt(totalStudents)}     icon={Users}        color="bg-indigo-500" />
                             <KpiCard title="Active Staff"    value={fmt(totalStaff)}        icon={UserCog}      color="bg-violet-500" />
                             <KpiCard title="Today Attendance" value={`${attendancePct}%`}   icon={CalendarCheck} color="bg-green-500" />
-                            <KpiCard title="This Month Fees" value={`$${fmt(monthFees)}`}   icon={DollarSign}   color="bg-blue-500" />
+                            <KpiCard title="This Month Fees" value={formatMoney(monthFees)} icon={DollarSign}   color="bg-blue-500" />
                         </>
                     )}
-                    <KpiCard title="Outstanding Fees"  value={`$${fmt(pendingFees)}`}      icon={AlertCircle}  color="bg-orange-500" />
+                    <KpiCard title="Outstanding Fees"  value={formatMoney(pendingFees)}     icon={AlertCircle}  color="bg-orange-500" />
                     {role === 'accountant' && todayCollection !== undefined && (
-                        <KpiCard title="Today Collection" value={`$${fmt(todayCollection)}`} icon={DollarSign} color="bg-teal-500" />
+                        <KpiCard title="Today Collection" value={formatMoney(todayCollection)} icon={DollarSign} color="bg-teal-500" />
                     )}
                     {(role === 'school-admin' || role === 'principal' || role === 'teacher') && (
                         <KpiCard title="Homework Pending" value={pendingHomework}           icon={Clock}        color="bg-yellow-500" />
@@ -88,7 +90,7 @@ export default function Dashboard({ role, totalStudents, totalStaff, attendanceP
                                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                                         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
                                         <YAxis tick={{ fontSize: 11 }} />
-                                        <Tooltip formatter={(v: number) => [`$${fmt(v)}`, 'Collected']} />
+                                        <Tooltip formatter={(v: number) => [formatMoney(v), 'Collected']} />
                                         <Bar dataKey="amount" fill="#6366f1" radius={[4, 4, 0, 0]} isAnimationActive={false} />
                                     </BarChart>
                                 </ResponsiveContainer>

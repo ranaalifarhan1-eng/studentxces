@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { ArrowLeft, Plus, LogOut } from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
 import type { PageProps, PaginatedResponse } from '@/Types';
 
 interface HostelOption { id: number; name: string; type: string; }
@@ -29,50 +30,64 @@ const aDefault = { hostel_id: '', room_id: '', student_search: '', student_id: '
 
 export default function HostelAllocations({ allocations, hostels, filters }: Props) {
     const { flash } = usePage<PageProps>().props;
+    const { format: formatMoney } = useCurrency();
     const [open, setOpen]         = useState(false);
-    const [vacateOpen, setVacateOpen] = useState<Allocation | null>(null);
+    const [leaveOpen, setLeaveOpen] = useState(false);
+    const [activeAlloc, setActiveAlloc] = useState<Allocation | null>(null);
+    const [leaveDate, setLeaveDate]   = useState(new Date().toISOString().split('T')[0]);
     const [form, setForm]         = useState<Record<string, string>>(aDefault);
     const [rooms, setRooms]       = useState<RoomOption[]>([]);
-    const [students, setStudents] = useState<{ id: number; first_name: string; last_name: string | null; admission_no: string }[]>([]);
-    const [vacateDate, setVacateDate] = useState(new Date().toISOString().split('T')[0]);
+    const [students, setStudents] = useState<{ id: number; name: string; adm: string; class: string }[]>([]);
+    const [selectedStudent, setSelectedStudent] = useState<any>(null);
     const [saving, setSaving]     = useState(false);
 
     function applyFilter(key: string, value: string) {
         router.get('/school/hostel/allocations', { ...filters, [key]: value || undefined }, { preserveScroll: true });
     }
 
-    async function loadRooms(hostelId: string) {
-        setForm(p => ({ ...p, hostel_id: hostelId, room_id: '' }));
-        if (!hostelId) { setRooms([]); return; }
-        const res = await fetch(`/school/hostel/${hostelId}/available-rooms`);
-        const data = await res.json();
-        setRooms(data);
+    async function onHostelChange(hId: string) {
+        setForm(p => ({ ...p, hostel_id: hId, room_id: '' }));
+        if (!hId) { setRooms([]); return; }
+        const res = await fetch(`/school/hostel/${hId}/rooms/json`);
+        if (res.ok) setRooms(await res.json());
     }
 
-    function searchStudents(q: string) {
+    async function searchStudents(q: string) {
         setForm(p => ({ ...p, student_search: q }));
         if (q.length < 2) { setStudents([]); return; }
-        fetch(`/api/v1/students/search?q=${encodeURIComponent(q)}`)
-            .then(r => r.json())
-            .then(d => setStudents(d.data ?? []));
+        const res = await fetch(`/school/students/search?q=${encodeURIComponent(q)}`);
+        if (res.ok) {
+            const data = await res.json();
+            setStudents(data.map((s: any) => ({ id: s.id, name: `${s.first_name} ${s.last_name ?? ''}`, adm: s.admission_no, class: s.school_class?.name ?? '' })));
+        }
     }
 
-    function handleAllocate() {
+    function selectStudent(s: any) {
+        setSelectedStudent(s);
+        setForm(p => ({ ...p, student_id: String(s.id), student_search: `${s.name} (${s.adm})` }));
+        setStudents([]);
+    }
+
+    function handleSave() {
         setSaving(true);
         router.post('/school/hostel/allocations', form, {
             preserveScroll: true,
-            onSuccess: () => { setOpen(false); setForm(aDefault); setRooms([]); setStudents([]); setSaving(false); },
-            onError:   () => setSaving(false),
+            onSuccess: () => { setOpen(false); setSaving(false); setForm(aDefault); setSelectedStudent(null); },
+            onError: () => setSaving(false),
         });
     }
 
-    function handleVacate() {
-        if (!vacateOpen) return;
-        setSaving(true);
-        router.put(`/school/hostel/allocations/${vacateOpen.id}/vacate`, { leaving_date: vacateDate }, {
+    function openLeave(a: Allocation) {
+        setActiveAlloc(a);
+        setLeaveDate(new Date().toISOString().split('T')[0]);
+        setLeaveOpen(true);
+    }
+
+    function handleLeave() {
+        if (!activeAlloc) return;
+        router.put(`/school/hostel/allocations/${activeAlloc.id}/leave`, { leaving_date: leaveDate }, {
             preserveScroll: true,
-            onSuccess: () => { setVacateOpen(null); setSaving(false); },
-            onError:   () => setSaving(false),
+            onSuccess: () => setLeaveOpen(false),
         });
     }
 
@@ -88,12 +103,12 @@ export default function HostelAllocations({ allocations, hostels, filters }: Pro
                         </Link>
                         <span className="text-slate-300 dark:text-slate-700">|</span>
                         <div>
-                            <h1 className="text-xl font-bold text-slate-900 dark:text-white">Room Allocations</h1>
-                            <p className="text-sm text-slate-500">{allocations.meta?.total ?? 0} records</p>
+                            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Hostel Allocations</h1>
+                            <p className="text-sm text-slate-500 mt-0.5">Assign students to hostel beds</p>
                         </div>
                     </div>
-                    <Button onClick={() => setOpen(true)} className="bg-indigo-600 hover:bg-indigo-700 text-white inline-flex items-center gap-2">
-                        <Plus className="w-4 h-4" /> Allocate Room
+                    <Button onClick={() => { setForm(aDefault); setSelectedStudent(null); setOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white inline-flex items-center gap-2">
+                        <Plus className="w-4 h-4" /> Allocate Student
                     </Button>
                 </div>
 
@@ -112,9 +127,9 @@ export default function HostelAllocations({ allocations, hostels, filters }: Pro
                     <Select value={filters.status ?? ''} onValueChange={v => applyFilter('status', v)}>
                         <SelectTrigger className="w-36"><SelectValue placeholder="All Status" /></SelectTrigger>
                         <SelectContent>
-                            <SelectItem value="">All</SelectItem>
+                            <SelectItem value="">All Status</SelectItem>
                             <SelectItem value="active">Active</SelectItem>
-                            <SelectItem value="left">Left</SelectItem>
+                            <SelectItem value="vacated">Vacated</SelectItem>
                         </SelectContent>
                     </Select>
                 </div>
@@ -127,8 +142,8 @@ export default function HostelAllocations({ allocations, hostels, filters }: Pro
                                 <TableHead>Hostel</TableHead>
                                 <TableHead>Room</TableHead>
                                 <TableHead>Bed</TableHead>
-                                <TableHead>Joining</TableHead>
-                                <TableHead>Leaving</TableHead>
+                                <TableHead>Joined</TableHead>
+                                <TableHead>Vacated</TableHead>
                                 <TableHead>Status</TableHead>
                                 <TableHead className="w-16"></TableHead>
                             </TableRow>
@@ -140,23 +155,22 @@ export default function HostelAllocations({ allocations, hostels, filters }: Pro
                                 <TableRow key={a.id}>
                                     <TableCell>
                                         <p className="font-medium text-sm text-slate-900 dark:text-white">{a.student?.first_name} {a.student?.last_name}</p>
-                                        <p className="text-xs text-slate-400">{a.student?.admission_no} · {a.student?.school_class?.name}</p>
+                                        <p className="text-xs text-slate-400">{a.student?.school_class?.name} · {a.student?.admission_no}</p>
                                     </TableCell>
                                     <TableCell className="text-sm text-slate-600 dark:text-slate-400">{a.hostel?.name}</TableCell>
-                                    <TableCell className="text-sm text-slate-500">
-                                        {a.room?.room_no} {a.room?.floor ? `(${a.room.floor})` : ''}
-                                    </TableCell>
+                                    <TableCell className="text-sm text-slate-600 dark:text-slate-400">Room {a.room?.room_no}</TableCell>
                                     <TableCell className="text-sm text-slate-500">{a.bed_no ?? '—'}</TableCell>
                                     <TableCell className="text-sm text-slate-500">{new Date(a.joining_date).toLocaleDateString()}</TableCell>
                                     <TableCell className="text-sm text-slate-500">{a.leaving_date ? new Date(a.leaving_date).toLocaleDateString() : '—'}</TableCell>
                                     <TableCell>
-                                        <Badge className={`border-0 text-xs capitalize ${a.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>{a.status}</Badge>
+                                        <Badge className={`border-0 text-xs capitalize ${a.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-slate-100 text-slate-500'}`}>
+                                            {a.status}
+                                        </Badge>
                                     </TableCell>
                                     <TableCell>
                                         {a.status === 'active' && (
-                                            <Button size="sm" variant="ghost" className="text-red-500 hover:text-red-700 inline-flex items-center gap-1"
-                                                onClick={() => { setVacateOpen(a); setVacateDate(new Date().toISOString().split('T')[0]); }}>
-                                                <LogOut className="w-3.5 h-3.5" />
+                                            <Button size="sm" variant="ghost" className="text-amber-600 text-xs" onClick={() => openLeave(a)}>
+                                                <LogOut className="w-3.5 h-3.5 mr-1" /> Vacate
                                             </Button>
                                         )}
                                     </TableCell>
@@ -167,14 +181,13 @@ export default function HostelAllocations({ allocations, hostels, filters }: Pro
                 </div>
             </div>
 
-            {/* Allocate Dialog */}
             <Dialog open={open} onOpenChange={setOpen}>
                 <DialogContent className="sm:max-w-md">
-                    <DialogHeader><DialogTitle>Allocate Room</DialogTitle></DialogHeader>
+                    <DialogHeader><DialogTitle>Allocate Bed</DialogTitle></DialogHeader>
                     <div className="space-y-4 mt-2">
                         <div className="space-y-1.5">
                             <Label>Hostel <span className="text-red-500">*</span></Label>
-                            <Select value={form.hostel_id} onValueChange={loadRooms}>
+                            <Select value={form.hostel_id} onValueChange={onHostelChange}>
                                 <SelectTrigger><SelectValue placeholder="Select hostel" /></SelectTrigger>
                                 <SelectContent>
                                     {hostels.map(h => <SelectItem key={h.id} value={String(h.id)}>{h.name}</SelectItem>)}
@@ -189,7 +202,7 @@ export default function HostelAllocations({ allocations, hostels, filters }: Pro
                                     <SelectContent>
                                         {rooms.map(r => (
                                             <SelectItem key={r.id} value={String(r.id)}>
-                                                Room {r.room_no} {r.floor ? `(${r.floor})` : ''} — {r.type}{r.ac ? ' AC' : ''} · {r.capacity - r.occupied} beds left · ৳{Number(r.monthly_fee).toLocaleString()}/mo
+                                                Room {r.room_no} {r.floor ? `(${r.floor})` : ''} — {r.type}{r.ac ? ' AC' : ''} · {r.capacity - r.occupied} beds left · {formatMoney(r.monthly_fee)}/mo
                                             </SelectItem>
                                         ))}
                                     </SelectContent>

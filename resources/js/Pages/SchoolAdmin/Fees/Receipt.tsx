@@ -3,6 +3,7 @@ import AppLayout from '@/Layouts/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ArrowLeft, Printer } from 'lucide-react';
+import { useCurrency } from '@/lib/currency';
 
 interface FeePayment {
     id: number; receipt_no: string; amount_due: string; amount_paid: string;
@@ -29,64 +30,60 @@ const METHOD_LABELS: Record<string, string> = {
 };
 
 export default function FeeReceipt({ payment }: { payment: FeePayment }) {
-    const balance = Number(payment.amount_due) + Number(payment.fine) - Number(payment.discount) - Number(payment.amount_paid);
+    const { format: formatMoney } = useCurrency();
+    const netDue = Number(payment.amount_due) + Number(payment.fine) - Number(payment.discount);
+    const balance = Math.max(0, netDue - Number(payment.amount_paid));
 
     return (
-        <AppLayout title={`Receipt — ${payment.receipt_no}`}>
-            <div className="max-w-xl mx-auto space-y-4">
-                <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                        <Link href="/school/fees/payments" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 dark:hover:text-white">
-                            <ArrowLeft className="w-4 h-4" /> Payments
-                        </Link>
-                        <span className="text-slate-300 dark:text-slate-700">|</span>
-                        <h1 className="text-xl font-bold text-slate-900 dark:text-white">Receipt</h1>
-                    </div>
-                    <Button variant="outline" onClick={() => window.print()} className="inline-flex items-center gap-2">
-                        <Printer className="w-4 h-4" /> Print
+        <AppLayout title={`Receipt #${payment.receipt_no}`}>
+            <div className="max-w-xl mx-auto space-y-6">
+                <div className="flex items-center justify-between no-print">
+                    <Link href="/school/fees/payments" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 dark:hover:text-white">
+                        <ArrowLeft className="w-4 h-4" /> Payments
+                    </Link>
+                    <Button onClick={() => window.print()} variant="outline" className="inline-flex items-center gap-2">
+                        <Printer className="w-4 h-4" /> Print Receipt
                     </Button>
                 </div>
 
-                <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 overflow-hidden print:shadow-none">
+                {/* Printable Receipt Card */}
+                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-8 shadow-sm space-y-6 print:shadow-none print:border-none">
                     {/* Header */}
-                    <div className="bg-indigo-600 text-white px-6 py-5">
-                        <div className="flex items-center justify-between">
-                            <div>
-                                <h2 className="text-lg font-bold">Fee Receipt</h2>
-                                <p className="text-indigo-200 text-sm mt-0.5">School Management System</p>
-                            </div>
-                            <div className="text-right">
-                                <p className="font-mono text-sm text-indigo-200">Receipt No.</p>
-                                <p className="font-mono font-bold">{payment.receipt_no}</p>
-                            </div>
+                    <div className="flex justify-between items-start pb-6 border-b border-slate-100 dark:border-slate-800">
+                        <div>
+                            <h2 className="text-xl font-bold text-slate-900 dark:text-white">Fee Receipt</h2>
+                            <p className="font-mono text-xs text-slate-400 mt-1">#{payment.receipt_no}</p>
+                        </div>
+                        <Badge className={`border-0 text-xs capitalize ${STATUS_STYLE[payment.status] ?? ''}`}>
+                            {payment.status}
+                        </Badge>
+                    </div>
+
+                    {/* Student Info */}
+                    <div className="grid grid-cols-2 gap-4 pb-6 border-b border-slate-100 dark:border-slate-800 text-sm">
+                        <div>
+                            <p className="text-xs text-slate-400 uppercase tracking-wide">Student</p>
+                            <p className="font-semibold text-slate-900 dark:text-white mt-0.5">
+                                {payment.student?.first_name} {payment.student?.last_name}
+                            </p>
+                            <p className="text-xs text-slate-500">ID: {payment.student?.admission_no}</p>
+                        </div>
+                        <div>
+                            <p className="text-xs text-slate-400 uppercase tracking-wide">Class</p>
+                            <p className="font-semibold text-slate-900 dark:text-white mt-0.5">
+                                {payment.student?.school_class?.name ?? '—'}
+                            </p>
                         </div>
                     </div>
 
-                    <div className="p-6 space-y-5">
-                        {/* Student Info */}
-                        <div className="grid grid-cols-2 gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
+                    {/* Fee Details */}
+                    <div className="space-y-3 pb-6 border-b border-slate-100 dark:border-slate-800">
+                        <div className="flex justify-between items-start text-sm">
                             <div>
-                                <p className="text-xs text-slate-400 uppercase tracking-wide">Student</p>
-                                <p className="font-semibold text-slate-900 dark:text-white mt-0.5">
-                                    {payment.student?.first_name} {payment.student?.last_name}
-                                </p>
-                                <p className="text-sm text-slate-500">{payment.student?.admission_no}</p>
+                                <p className="font-semibold text-slate-900 dark:text-white">{payment.fee_structure?.fee_category?.name ?? 'Tuition Fee'}</p>
+                                <p className="text-xs text-slate-400 capitalize">{payment.fee_structure?.frequency} fee</p>
                             </div>
-                            <div>
-                                <p className="text-xs text-slate-400 uppercase tracking-wide">Class</p>
-                                <p className="font-medium text-slate-700 dark:text-slate-300 mt-0.5">{payment.student?.school_class?.name}</p>
-                            </div>
-                        </div>
-
-                        {/* Fee Details */}
-                        <div className="grid grid-cols-2 gap-4 pb-4 border-b border-slate-100 dark:border-slate-800">
-                            <div>
-                                <p className="text-xs text-slate-400 uppercase tracking-wide">Fee Type</p>
-                                <p className="font-medium text-slate-700 dark:text-slate-300 mt-0.5">{payment.fee_structure?.fee_category?.name}</p>
-                                <p className="text-xs text-slate-400 capitalize">{payment.fee_structure?.fee_category?.type}</p>
-                            </div>
-                            <div>
-                                <p className="text-xs text-slate-400 uppercase tracking-wide">Academic Year</p>
+                            <div className="text-right">
                                 <p className="font-medium text-slate-700 dark:text-slate-300 mt-0.5">{payment.fee_structure?.academic_year}</p>
                                 {payment.month_year && <p className="text-xs text-slate-400">Month: {payment.month_year}</p>}
                             </div>
@@ -96,40 +93,40 @@ export default function FeeReceipt({ payment }: { payment: FeePayment }) {
                         <div className="space-y-2">
                             <div className="flex justify-between text-sm">
                                 <span className="text-slate-500">Amount Due</span>
-                                <span className="text-slate-900 dark:text-white">৳{Number(payment.amount_due).toLocaleString()}</span>
+                                <span className="text-slate-900 dark:text-white">{formatMoney(payment.amount_due)}</span>
                             </div>
                             {Number(payment.fine) > 0 && (
                                 <div className="flex justify-between text-sm">
                                     <span className="text-red-500">Fine</span>
-                                    <span className="text-red-500">+ ৳{Number(payment.fine).toLocaleString()}</span>
+                                    <span className="text-red-500">+ {formatMoney(payment.fine)}</span>
                                 </div>
                             )}
                             {Number(payment.discount) > 0 && (
                                 <div className="flex justify-between text-sm">
                                     <span className="text-green-500">Discount</span>
-                                    <span className="text-green-500">- ৳{Number(payment.discount).toLocaleString()}</span>
+                                    <span className="text-green-500">- {formatMoney(payment.discount)}</span>
                                 </div>
                             )}
                             <div className="border-t border-slate-100 dark:border-slate-800 pt-2 flex justify-between font-semibold">
                                 <span className="text-slate-700 dark:text-slate-300">Net Due</span>
                                 <span className="text-slate-900 dark:text-white">
-                                    ৳{(Number(payment.amount_due) + Number(payment.fine) - Number(payment.discount)).toLocaleString()}
+                                    {formatMoney(netDue)}
                                 </span>
                             </div>
                             <div className="flex justify-between font-bold text-lg">
                                 <span className="text-slate-700 dark:text-slate-300">Amount Paid</span>
-                                <span className="text-green-600">৳{Number(payment.amount_paid).toLocaleString()}</span>
+                                <span className="text-green-600">{formatMoney(payment.amount_paid)}</span>
                             </div>
                             {balance > 0 && (
                                 <div className="flex justify-between text-sm font-medium text-red-600">
                                     <span>Balance Due</span>
-                                    <span>৳{balance.toLocaleString()}</span>
+                                    <span>{formatMoney(balance)}</span>
                                 </div>
                             )}
                         </div>
 
                         {/* Payment Info */}
-                        <div className="grid grid-cols-3 gap-3 pb-4 border-b border-slate-100 dark:border-slate-800">
+                        <div className="grid grid-cols-3 gap-3 pb-4 pt-4 border-t border-slate-100 dark:border-slate-800">
                             <div>
                                 <p className="text-xs text-slate-400 uppercase tracking-wide">Date</p>
                                 <p className="font-medium text-slate-700 dark:text-slate-300 text-sm mt-0.5">

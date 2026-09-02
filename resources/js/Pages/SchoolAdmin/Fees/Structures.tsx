@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Plus, MoreHorizontal, Pencil, Trash2, ArrowLeft, Settings2 } from 'lucide-react';
 import { Link } from '@inertiajs/react';
+import { useCurrency } from '@/lib/currency';
 import type { SchoolClass, PageProps, PaginatedResponse } from '@/Types';
 
 interface FeeCategory { id: number; name: string; type: string; }
@@ -36,19 +37,34 @@ const FREQ_COLORS: Record<string, string> = {
     annual: 'bg-teal-100 text-teal-700', one_time: 'bg-amber-100 text-amber-700',
 };
 
-const emptyForm = { class_id: '', fee_category_id: '', academic_year: '2025-2026', amount: '', due_date: '', frequency: 'monthly', description: '', is_active: true };
-
 export default function FeeStructures({ structures, classes, categories, filters, currentYear }: Props) {
     const { flash } = usePage<PageProps>().props;
+    const { currency, format: formatMoney } = useCurrency();
     const [open, setOpen] = useState(false);
     const [editing, setEditing] = useState<FeeStructure | null>(null);
-    const { data, setData, post, put, processing, errors, reset } = useForm(emptyForm as any);
+    const { data, setData, post, put, delete: destroy, processing, errors, reset } = useForm({ 
+        class_id: '', fee_category_id: '', academic_year: currentYear || '2025-2026', amount: '', due_date: '', frequency: 'monthly', description: '', is_active: true 
+    });
 
     function applyFilter(key: string, value: string) {
         router.get('/school/fees/structures', { ...filters, [key]: value || undefined }, { preserveScroll: true });
     }
 
-    function openCreate() { reset(); setEditing(null); setOpen(true); }
+    function openCreate() { 
+        reset(); 
+        setData({
+            class_id: classes[0] ? String(classes[0].id) : '',
+            fee_category_id: categories[0] ? String(categories[0].id) : '',
+            academic_year: currentYear || '2025-2026',
+            amount: '',
+            due_date: '',
+            frequency: 'monthly',
+            description: '',
+            is_active: true
+        });
+        setEditing(null); 
+        setOpen(true); 
+    }
     function openEdit(s: FeeStructure) {
         setData({
             class_id: String(s.class_id), fee_category_id: String(s.fee_category_id),
@@ -69,8 +85,8 @@ export default function FeeStructures({ structures, classes, categories, filters
     }
 
     function handleDelete(s: FeeStructure) {
-        if (!confirm('Delete this fee structure?')) return;
-        router.delete(`/school/fees/structures/${s.id}`);
+        if (!confirm(`Delete fee structure for "${s.fee_category?.name}"?`)) return;
+        destroy(`/school/fees/structures/${s.id}`);
     }
 
     return (
@@ -79,12 +95,12 @@ export default function FeeStructures({ structures, classes, categories, filters
                 <div className="flex items-center justify-between">
                     <div className="flex items-center gap-3">
                         <Link href="/school/fees/payments" className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 dark:hover:text-white">
-                            <ArrowLeft className="w-4 h-4" /> Fees
+                            <ArrowLeft className="w-4 h-4" /> Payments
                         </Link>
                         <span className="text-slate-300 dark:text-slate-700">|</span>
                         <div>
                             <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Fee Structures</h1>
-                            <p className="text-sm text-slate-500">{structures.meta?.total ?? 0} structures configured</p>
+                            <p className="text-sm text-slate-500">Define fees for each class and academic year</p>
                         </div>
                     </div>
                     <div className="flex gap-2">
@@ -101,7 +117,6 @@ export default function FeeStructures({ structures, classes, categories, filters
                     <div className="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700">{flash.success}</div>
                 )}
 
-                {/* Filters */}
                 <div className="flex gap-3 flex-wrap">
                     <Select value={filters.class_id ?? ''} onValueChange={v => applyFilter('class_id', v)}>
                         <SelectTrigger className="w-40"><SelectValue placeholder="All Classes" /></SelectTrigger>
@@ -129,7 +144,7 @@ export default function FeeStructures({ structures, classes, categories, filters
                     <Table>
                         <TableHeader>
                             <TableRow className="bg-slate-50 dark:bg-slate-900">
-                                <TableHead>Category</TableHead>
+                                <TableHead>Category / Type</TableHead>
                                 <TableHead>Class</TableHead>
                                 <TableHead>Academic Year</TableHead>
                                 <TableHead className="text-right">Amount</TableHead>
@@ -151,7 +166,7 @@ export default function FeeStructures({ structures, classes, categories, filters
                                     <TableCell className="text-slate-600 dark:text-slate-400">{s.school_class?.name}</TableCell>
                                     <TableCell className="text-slate-600 dark:text-slate-400">{s.academic_year}</TableCell>
                                     <TableCell className="text-right font-semibold text-slate-900 dark:text-white">
-                                        ৳{Number(s.amount).toLocaleString()}
+                                        {formatMoney(s.amount)}
                                     </TableCell>
                                     <TableCell>
                                         <Badge className={`border-0 text-xs ${FREQ_COLORS[s.frequency] ?? ''}`}>{FREQ_LABELS[s.frequency] ?? s.frequency}</Badge>
@@ -214,7 +229,7 @@ export default function FeeStructures({ structures, classes, categories, filters
                                 <Input value={data.academic_year} onChange={e => setData('academic_year', e.target.value)} placeholder="2025-2026" />
                             </div>
                             <div className="space-y-1.5">
-                                <Label>Amount (৳) <span className="text-red-500">*</span></Label>
+                                <Label>Amount ({currency}) <span className="text-red-500">*</span></Label>
                                 <Input type="number" min="0" step="0.01" value={data.amount} onChange={e => setData('amount', e.target.value)} placeholder="0.00" />
                                 {errors.amount && <p className="text-xs text-red-500">{errors.amount}</p>}
                             </div>

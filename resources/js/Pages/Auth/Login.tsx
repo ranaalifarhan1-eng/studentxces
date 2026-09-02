@@ -44,7 +44,10 @@ const colorMap: Record<string, string> = {
 };
 
 export default function Login() {
-    const { flash, errors: serverErrors, showDemo, demoAccounts } = usePage<LoginProps>().props;
+    const { flash, errors: serverErrors, showDemo, demoAccounts, branding, active_school } = usePage<LoginProps>().props;
+
+    const brandName = branding?.tenant_name || active_school?.name || branding?.platform_name || branding?.app_name || 'StudentXces';
+    const logoUrl = branding?.logo_url || active_school?.logo_url || branding?.platform_logo_url || null;
 
     const {
         register,

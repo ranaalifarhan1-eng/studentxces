@@ -141,13 +141,21 @@ export default function Domains({ domains, cname_target, tenant_base_domain }: P
                                                 </span>
                                             </td>
                                             <td className="px-6 py-4">
-                                                {domain.status === 'active' || domain.status === 'verified' ? (
+                                                {domain.status === 'active' ? (
                                                     <span className="inline-flex items-center gap-1.5 text-xs text-green-700 dark:text-green-400 font-medium">
                                                         <CheckCircle2 className="w-4 h-4 text-green-600" /> Active
+                                                    </span>
+                                                ) : domain.status === 'verified' ? (
+                                                    <span className="inline-flex items-center gap-1.5 text-xs text-sky-700 dark:text-sky-400 font-medium">
+                                                        <CheckCircle2 className="w-4 h-4 text-sky-600" /> DNS Verified
                                                     </span>
                                                 ) : domain.status === 'failed' ? (
                                                     <span className="inline-flex items-center gap-1.5 text-xs text-red-700 dark:text-red-400 font-medium">
                                                         <AlertCircle className="w-4 h-4 text-red-600" /> DNS Unverified
+                                                    </span>
+                                                ) : domain.status === 'disabled' ? (
+                                                    <span className="inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 font-medium">
+                                                        Disabled
                                                     </span>
                                                 ) : (
                                                     <span className="inline-flex items-center gap-1.5 text-xs text-amber-700 dark:text-amber-400 font-medium">
@@ -160,9 +168,13 @@ export default function Domains({ domains, cname_target, tenant_base_domain }: P
                                                     <span className="inline-flex items-center gap-1 text-xs text-green-700 dark:text-green-400 font-medium">
                                                         <ShieldCheck className="w-4 h-4 text-green-600" /> Secure
                                                     </span>
+                                                ) : domain.ssl_status === 'failed' ? (
+                                                    <span className="inline-flex items-center gap-1 text-xs text-red-700 dark:text-red-400 font-medium">
+                                                        <AlertCircle className="w-4 h-4 text-red-600" /> SSL Failed
+                                                    </span>
                                                 ) : (
-                                                    <span className="text-xs text-gray-500 dark:text-gray-400 font-medium">
-                                                        Provisioning
+                                                    <span className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400 font-medium">
+                                                        <RefreshCw className="w-4 h-4 text-amber-600" /> Provisioning
                                                     </span>
                                                 )}
                                             </td>
@@ -179,7 +191,7 @@ export default function Domains({ domains, cname_target, tenant_base_domain }: P
                                                         Verify DNS
                                                     </Button>
                                                 )}
-                                                {!domain.is_primary && (domain.status === 'active' || domain.status === 'verified') && (
+                                                {!domain.is_primary && domain.status === 'active' && domain.ssl_status === 'active' && (
                                                     <Button
                                                         variant="ghost"
                                                         size="sm"

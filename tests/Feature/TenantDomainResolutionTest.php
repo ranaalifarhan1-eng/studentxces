@@ -599,7 +599,10 @@ class TenantDomainResolutionTest extends TestCase
         $this->assertTrue($defaultDomain->is_primary);
 
         $customDomain1 = $this->domainService->addCustomDomain($this->schoolA, 'app.lahorecambridge.com');
-        $customDomain1->update(['status' => SchoolDomain::STATUS_VERIFIED]);
+        $customDomain1->update([
+            'status'     => SchoolDomain::STATUS_ACTIVE,
+            'ssl_status' => SchoolDomain::SSL_ACTIVE,
+        ]);
 
         // Make custom domain 1 primary
         $this->domainService->setPrimary($customDomain1);

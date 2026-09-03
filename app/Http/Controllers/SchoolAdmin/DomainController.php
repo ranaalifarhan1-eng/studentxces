@@ -62,7 +62,7 @@ class DomainController extends Controller
         $verified = $this->domainService->verifyDomain($domain);
 
         if ($verified) {
-            return back()->with('success', "Domain '{$domain->hostname}' verified and activated successfully.");
+            return back()->with('success', "DNS verification successful for '{$domain->hostname}'. DNS is confirmed.");
         }
 
         return back()->with('error', "DNS verification failed for '{$domain->hostname}'. Please verify your CNAME or TXT challenge records.");

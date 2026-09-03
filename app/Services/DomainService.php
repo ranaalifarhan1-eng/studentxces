@@ -182,12 +182,12 @@ class DomainService
     }
 
     /**
-     * Set a verified or active domain as the primary domain for its school.
+     * Set an active domain with active SSL as the primary domain for its school.
      */
     public function setPrimary(SchoolDomain $domain): void
     {
-        if (! in_array($domain->status, [SchoolDomain::STATUS_ACTIVE, SchoolDomain::STATUS_VERIFIED], true)) {
-            throw new InvalidArgumentException('Cannot make an unverified or inactive domain primary.');
+        if ($domain->status !== SchoolDomain::STATUS_ACTIVE || $domain->ssl_status !== SchoolDomain::SSL_ACTIVE) {
+            throw new InvalidArgumentException('Cannot make an unactivated or unverified SSL domain primary.');
         }
 
         DB::transaction(function () use ($domain) {

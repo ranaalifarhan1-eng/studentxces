@@ -346,6 +346,8 @@ Route::middleware('auth')->group(function () {
             Route::get('settings/domains',                      [DomainController::class, 'index'])->name('settings.domains.index');
             Route::post('settings/domains',                     [DomainController::class, 'store'])->name('settings.domains.store');
             Route::post('settings/domains/{domain}/verify',     [DomainController::class, 'verify'])->name('settings.domains.verify');
+            Route::post('settings/domains/{domain}/activate',   [DomainController::class, 'activate'])->name('settings.domains.activate');
+            Route::get('settings/domains/{domain}/status',      [DomainController::class, 'status'])->name('settings.domains.status');
             Route::patch('settings/domains/{domain}/primary',   [DomainController::class, 'makePrimary'])->name('settings.domains.primary');
             Route::delete('settings/domains/{domain}',          [DomainController::class, 'destroy'])->name('settings.domains.destroy');
         });

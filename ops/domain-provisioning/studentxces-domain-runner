@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# StudentXces Automated Domain Provisioning Host Runner
+# ==============================================================================
+# This script runs on the host VPS (root/systemd) to process queued domain
+# provisioning requests. It claims requests via artisan, generates isolated
+# tenant Nginx configurations, issues dedicated Let's Encrypt certificates via
+# webroot, verifies HTTPS probes, and reports completion back to the app.
+#
+# DO NOT MODIFY ON LIVE SERVER WITHOUT CODE REVIEW.
+# ==============================================================================
+
+set -euo pipefail
+
+CONTAINER_NAME="studentxces-app"
+APP_DIR="/opt/studentxces"
+TENANTS_NGINX_DIR="/etc/nginx/studentxces-tenants.d"
+WEBROOT_DIR="/var/www/html"
+LOG_TAG="studentxces-domain-runner"
+
+log() {
+    echo "[$(date -u +'%Y-%m-%d %H:%M:%SZ')] [$LOG_TAG] $*"
+}
+
+error() {
+    echo "[$(date -u +'%Y-%m-%d %H:%M:%SZ')] [$LOG_TAG] [ERROR] $*" >&2
+}
+
+# 1. Claim next queued request
+log "Checking for queued domain provisioning requests..."
+CLAIM_OUTPUT=$(docker compose -f "${APP_DIR}/docker-compose.yml" exec -T "${CONTAINER_NAME}" php artisan tenancy:provisioning:claim-next --json)
+
+if [[ -z "${CLAIM_OUTPUT}" || "${CLAIM_OUTPUT}" == *"no_work"* || "${CLAIM_OUTPUT}" == "NO_WORK" ]]; then
+    log "No pending provisioning requests found. Exiting cleanly."
+    exit 0
+fi
+
+# Parse JSON fields safely using jq or python
+REQUEST_ID=$(echo "${CLAIM_OUTPUT}" | jq -r '.request_id // empty')
+DOMAIN_ID=$(echo "${CLAIM_OUTPUT}" | jq -r '.domain_id // empty')
+SCHOOL_ID=$(echo "${CLAIM_OUTPUT}" | jq -r '.school_id // empty')
+HOSTNAME=$(echo "${CLAIM_OUTPUT}" | jq -r '.hostname // empty')
+
+if [[ -z "${REQUEST_ID}" || -z "${DOMAIN_ID}" || -z "${HOSTNAME}" ]]; then
+    error "Failed to parse claim payload: ${CLAIM_OUTPUT}"
+    exit 1
+fi
+
+log "Processing Request #${REQUEST_ID} for Domain #${DOMAIN_ID} (${HOSTNAME}, School #${SCHOOL_ID})"
+
+# Host-level strict regex hostname validation (Secondary Layer)
+if ! [[ "${HOSTNAME}" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]; then
+    error "Invalid hostname format detected on host: ${HOSTNAME}"
+    docker compose -f "${APP_DIR}/docker-compose.yml" exec -T "${CONTAINER_NAME}" php artisan tenancy:provisioning:mark-failed --request-id="${REQUEST_ID}" --domain-id="${DOMAIN_ID}" --error-code="nginx_validation_failed"
+    exit 1
+fi
+
+# Construct safe config filenames
+SAFE_SUFFIX=$(echo "${HOSTNAME}" | tr '.-' '__')
+CONFIG_FILE="${TENANTS_NGINX_DIR}/tenant_${DOMAIN_ID}_${SAFE_SUFFIX}.conf"
+TEMP_CONFIG_FILE="${TENANTS_NGINX_DIR}/.tenant_${DOMAIN_ID}_${SAFE_SUFFIX}.conf.tmp"
+BACKUP_CONFIG_FILE="${TENANTS_NGINX_DIR}/.tenant_${DOMAIN_ID}_${SAFE_SUFFIX}.conf.bak"
+CERT_NAME="studentxces-tenant-${DOMAIN_ID}"
+
+mkdir -p "${TENANTS_NGINX_DIR}"
+
+# Preserve existing config if one exists
+if [[ -f "${CONFIG_FILE}" ]]; then
+    cp "${CONFIG_FILE}" "${BACKUP_CONFIG_FILE}"
+fi
+
+rollback() {
+    local error_code="${1:-activation_failed}"
+    error "Executing compensating rollback for domain ${HOSTNAME} (Error: ${error_code})..."
+
+    if [[ -f "${BACKUP_CONFIG_FILE}" ]]; then
+        mv "${BACKUP_CONFIG_FILE}" "${CONFIG_FILE}"
+        nginx -t && systemctl reload nginx || true
+    else
+        rm -f "${CONFIG_FILE}" "${TEMP_CONFIG_FILE}"
+        nginx -t && systemctl reload nginx || true
+    fi
+
+    rm -f "${BACKUP_CONFIG_FILE}" "${TEMP_CONFIG_FILE}"
+
+    docker compose -f "${APP_DIR}/docker-compose.yml" exec -T "${CONTAINER_NAME}" php artisan tenancy:provisioning:mark-failed --request-id="${REQUEST_ID}" --domain-id="${DOMAIN_ID}" --error-code="${error_code}"
+}
+
+# ------------------------------------------------------------------------------
+# STEP A: Generate HTTP-only / ACME Nginx Configuration
+# ------------------------------------------------------------------------------
+log "Generating Stage A (HTTP-only) configuration..."
+cat << EOF > "${TEMP_CONFIG_FILE}"
+# Managed automatically by StudentXces Provisioner — DO NOT EDIT MANUALLY
+
+server {
+    listen 80;
+    server_name ${HOSTNAME};
+
+    location /.well-known/acme-challenge/ {
+        root ${WEBROOT_DIR};
+        try_files \$uri =404;
+    }
+
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+EOF
+
+mv -f "${TEMP_CONFIG_FILE}" "${CONFIG_FILE}"
+
+if ! nginx -t; then
+    rollback "nginx_validation_failed"
+    exit 1
+fi
+
+systemctl reload nginx
+
+# ------------------------------------------------------------------------------
+# STEP B: Issue Dedicated Let's Encrypt Certificate via Webroot
+# ------------------------------------------------------------------------------
+log "Requesting Let's Encrypt certificate for ${HOSTNAME} (cert-name: ${CERT_NAME})..."
+if ! certbot certonly \
+    --webroot \
+    -w "${WEBROOT_DIR}" \
+    -d "${HOSTNAME}" \
+    --cert-name "${CERT_NAME}" \
+    --non-interactive \
+    --agree-tos; then
+    
+    error "Certbot issuance failed for ${HOSTNAME}."
+    rollback "certificate_failed"
+    exit 1
+fi
+
+# ------------------------------------------------------------------------------
+# STEP C: Generate Full HTTPS Nginx Configuration
+# ------------------------------------------------------------------------------
+log "Generating Stage B (HTTPS proxy) configuration..."
+cat << EOF > "${TEMP_CONFIG_FILE}"
+# Managed automatically by StudentXces Provisioner — DO NOT EDIT MANUALLY
+
+server {
+    listen 80;
+    server_name ${HOSTNAME};
+
+    location /.well-known/acme-challenge/ {
+        root ${WEBROOT_DIR};
+        try_files \$uri =404;
+    }
+
+    location / {
+        return 301 https://\$host\$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name ${HOSTNAME};
+
+    ssl_certificate /etc/letsencrypt/live/${CERT_NAME}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${CERT_NAME}/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    client_max_body_size 64M;
+
+    # StudentXces Compression
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_comp_level 6;
+    gzip_types
+        application/javascript
+        application/json
+        application/x-javascript
+        application/xml
+        image/svg+xml
+        text/css
+        text/javascript
+        text/plain
+        text/xml;
+
+    location /.well-known/acme-challenge/ {
+        root ${WEBROOT_DIR};
+        try_files \$uri =404;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8082;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_set_header X-Forwarded-Host \$host;
+        proxy_set_header X-Forwarded-Port \$server_port;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+}
+EOF
+
+mv -f "${TEMP_CONFIG_FILE}" "${CONFIG_FILE}"
+
+if ! nginx -t; then
+    rollback "nginx_validation_failed"
+    exit 1
+fi
+
+systemctl reload nginx
+
+# Clean up backup file on successful Nginx reload
+rm -f "${BACKUP_CONFIG_FILE}"
+
+# ------------------------------------------------------------------------------
+# STEP D: Revalidate via Canonical Application Activation Gate
+# ------------------------------------------------------------------------------
+log "Revalidating domain and reporting success to StudentXces application..."
+SUCCESS_OUTPUT=$(docker compose -f "${APP_DIR}/docker-compose.yml" exec -T "${CONTAINER_NAME}" php artisan tenancy:provisioning:mark-success --request-id="${REQUEST_ID}" --domain-id="${DOMAIN_ID}")
+
+log "Mark success output: ${SUCCESS_OUTPUT}"
+log "Domain provisioning for ${HOSTNAME} completed successfully!"
+exit 0

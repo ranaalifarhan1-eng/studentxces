@@ -65,6 +65,16 @@ class SchoolDomain extends Model
         return $this->belongsTo(School::class);
     }
 
+    public function provisioningRequests(): \Illuminate\Database\Eloquent\Relations\HasMany
+    {
+        return $this->hasMany(DomainProvisioningRequest::class, 'school_domain_id');
+    }
+
+    public function latestProvisioningRequest(): \Illuminate\Database\Eloquent\Relations\HasOne
+    {
+        return $this->hasOne(DomainProvisioningRequest::class, 'school_domain_id')->latestOfMany();
+    }
+
     public function isDefault(): bool
     {
         return $this->type === self::TYPE_DEFAULT;

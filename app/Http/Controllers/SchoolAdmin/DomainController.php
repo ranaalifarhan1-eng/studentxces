@@ -5,7 +5,9 @@ namespace App\Http\Controllers\SchoolAdmin;
 use App\Http\Controllers\Controller;
 use App\Models\School;
 use App\Models\SchoolDomain;
+use App\Services\DomainProvisioningService;
 use App\Services\DomainService;
+use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
@@ -15,29 +17,38 @@ use InvalidArgumentException;
 class DomainController extends Controller
 {
     public function __construct(
-        protected DomainService $domainService
+        protected DomainService $domainService,
+        protected DomainProvisioningService $provisioningService
     ) {}
 
     public function index(): Response
     {
-        $sid = $this->getSchoolId();
+        $sid  = $this->getSchoolId();
+        $user = auth()->user();
 
-        $domains = SchoolDomain::where('school_id', $sid)
+        $domains = SchoolDomain::with('latestProvisioningRequest')
+            ->where('school_id', $sid)
             ->orderByDesc('is_primary')
             ->orderBy('type')
             ->orderBy('created_at')
-            ->get();
+            ->get()
+            ->map(function (SchoolDomain $domain) use ($user) {
+                $data = $domain->toArray();
+                $data['provisioning'] = $this->provisioningService->getStatusForUi($domain, $user);
+                return $data;
+            });
 
         return Inertia::render('SchoolAdmin/Settings/Domains', [
             'domains'            => $domains,
             'cname_target'       => config('tenancy.cname_target', 'tenants.edusystem.store'),
             'tenant_base_domain' => config('tenancy.tenant_base_domain', 'edusystem.store'),
+            'is_super_admin'     => $user?->hasRole('super-admin') ?? false,
         ]);
     }
 
     public function store(Request $request): RedirectResponse
     {
-        $sid = $this->getSchoolId();
+        $sid    = $this->getSchoolId();
         $school = School::findOrFail($sid);
 
         $data = $request->validate([
@@ -66,6 +77,37 @@ class DomainController extends Controller
         }
 
         return back()->with('error', "DNS verification failed for '{$domain->hostname}'. Please verify your CNAME or TXT challenge records.");
+    }
+
+    public function activate(Request $request, SchoolDomain $domain): RedirectResponse
+    {
+        $user = $request->user();
+        if (! $user || ! $user->hasRole('super-admin')) {
+            abort(403, 'Unauthorized: Infrastructure provisioning requires Super Administrator privileges.');
+        }
+
+        $sid = $this->getSchoolId();
+        if ($domain->school_id !== $sid) {
+            abort(403, 'Unauthorized access to school domain.');
+        }
+
+        $result = $this->provisioningService->requestProvisioning($domain, $user);
+
+        if ($result['success']) {
+            return back()->with('success', $result['message']);
+        }
+
+        return back()->with('error', $result['message']);
+    }
+
+    public function status(SchoolDomain $domain): JsonResponse
+    {
+        $sid = $this->getSchoolId();
+        if ($domain->school_id !== $sid) {
+            abort(403, 'Unauthorized access to school domain.');
+        }
+
+        return response()->json($this->provisioningService->getStatusForUi($domain, auth()->user()));
     }
 
     public function makePrimary(SchoolDomain $domain): RedirectResponse

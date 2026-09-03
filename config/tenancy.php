@@ -115,4 +115,27 @@ return [
         '::1',
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Protected Provisioning Hosts
+    |--------------------------------------------------------------------------
+    |
+    | Hostnames that must never be provisioned or mutated by tenant automation.
+    | Combines hardcoded platform hosts with configurable additions.
+    |
+    */
+    'protected_hosts' => array_values(array_unique(array_filter(array_merge(
+        [
+            'console.edusystem.store',
+            'tenants.edusystem.store',
+            'admin.edusystem.store',
+            'edusystem.store',
+            'app.wamanager.io',
+            'app.lahorecambridge.com',
+            'app.academyofmodernsciences.com',
+        ],
+        array_map('trim', explode(',', env('DOMAIN_PROVISIONING_PROTECTED_HOSTS', '')))
+    )))),
+
 ];
+

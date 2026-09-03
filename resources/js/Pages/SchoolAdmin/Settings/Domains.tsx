@@ -1,11 +1,19 @@
 import AppLayout from '@/Layouts/AppLayout';
 import { useForm, router } from '@inertiajs/react';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Globe, CheckCircle2, AlertCircle, Trash2, Star, ShieldCheck, RefreshCw, Plus } from 'lucide-react';
+import { Globe, CheckCircle2, AlertCircle, Trash2, Star, ShieldCheck, RefreshCw, Plus, Zap } from 'lucide-react';
+
+interface ProvisioningStatus {
+    is_provisioning: boolean;
+    request_status: string | null;
+    safe_error: string | null;
+    can_activate: boolean;
+    can_retry: boolean;
+}
 
 interface SchoolDomainItem {
     id: number;
@@ -18,16 +26,31 @@ interface SchoolDomainItem {
     verified_at: string | null;
     ssl_status: 'pending' | 'active' | 'failed';
     created_at: string;
+    provisioning?: ProvisioningStatus;
 }
 
 interface Props {
     domains: SchoolDomainItem[];
     cname_target: string;
     tenant_base_domain: string;
+    is_super_admin?: boolean;
 }
 
-export default function Domains({ domains, cname_target, tenant_base_domain }: Props) {
+export default function Domains({ domains, cname_target, tenant_base_domain, is_super_admin = false }: Props) {
     const [verifyingId, setVerifyingId] = useState<number | null>(null);
+    const [activatingId, setActivatingId] = useState<number | null>(null);
+
+    // 5-second polling only while any domain has an active provisioning request
+    useEffect(() => {
+        const hasActiveProvisioning = domains.some(d => d.provisioning?.is_provisioning);
+        if (!hasActiveProvisioning) return;
+
+        const interval = setInterval(() => {
+            router.reload({ only: ['domains'] });
+        }, 5000);
+
+        return () => clearInterval(interval);
+    }, [domains]);
 
     const form = useForm({
         hostname: '',
@@ -44,6 +67,13 @@ export default function Domains({ domains, cname_target, tenant_base_domain }: P
         setVerifyingId(domain.id);
         router.post(`/school/settings/domains/${domain.id}/verify`, {}, {
             onFinish: () => setVerifyingId(null),
+        });
+    }
+
+    function handleActivate(domain: SchoolDomainItem) {
+        setActivatingId(domain.id);
+        router.post(`/school/settings/domains/${domain.id}/activate`, {}, {
+            onFinish: () => setActivatingId(null),
         });
     }
 
@@ -116,7 +146,7 @@ export default function Domains({ domains, cname_target, tenant_base_domain }: P
                                         <th className="px-6 py-3">Domain</th>
                                         <th className="px-6 py-3">Type</th>
                                         <th className="px-6 py-3">Verification</th>
-                                        <th className="px-6 py-3">SSL</th>
+                                        <th className="px-6 py-3">SSL / Routing</th>
                                         <th className="px-6 py-3 text-right">Actions</th>
                                     </tr>
                                 </thead>
@@ -164,17 +194,21 @@ export default function Domains({ domains, cname_target, tenant_base_domain }: P
                                                 )}
                                             </td>
                                             <td className="px-6 py-4">
-                                                {domain.ssl_status === 'active' ? (
+                                                {domain.provisioning?.is_provisioning ? (
+                                                    <span className="inline-flex items-center gap-1 text-xs text-indigo-700 dark:text-indigo-400 font-medium animate-pulse">
+                                                        <RefreshCw className="w-4 h-4 animate-spin text-indigo-600" /> Provisioning...
+                                                    </span>
+                                                ) : domain.ssl_status === 'active' ? (
                                                     <span className="inline-flex items-center gap-1 text-xs text-green-700 dark:text-green-400 font-medium">
                                                         <ShieldCheck className="w-4 h-4 text-green-600" /> Secure
                                                     </span>
                                                 ) : domain.ssl_status === 'failed' ? (
                                                     <span className="inline-flex items-center gap-1 text-xs text-red-700 dark:text-red-400 font-medium">
-                                                        <AlertCircle className="w-4 h-4 text-red-600" /> SSL Failed
+                                                        <AlertCircle className="w-4 h-4 text-red-600" /> Provisioning Failed
                                                     </span>
                                                 ) : (
                                                     <span className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400 font-medium">
-                                                        <RefreshCw className="w-4 h-4 text-amber-600" /> Provisioning
+                                                        <RefreshCw className="w-4 h-4 text-amber-600" /> Pending SSL
                                                     </span>
                                                 )}
                                             </td>
@@ -184,11 +218,35 @@ export default function Domains({ domains, cname_target, tenant_base_domain }: P
                                                         variant="outline"
                                                         size="sm"
                                                         onClick={() => handleVerify(domain)}
-                                                        disabled={verifyingId === domain.id}
+                                                        disabled={verifyingId === domain.id || domain.provisioning?.is_provisioning}
                                                         className="text-xs"
                                                     >
                                                         <RefreshCw className={`w-3.5 h-3.5 mr-1 ${verifyingId === domain.id ? 'animate-spin' : ''}`} />
                                                         Verify DNS
+                                                    </Button>
+                                                )}
+                                                {is_super_admin && domain.provisioning?.can_activate && (
+                                                    <Button
+                                                        variant="default"
+                                                        size="sm"
+                                                        onClick={() => handleActivate(domain)}
+                                                        disabled={activatingId === domain.id}
+                                                        className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white gap-1"
+                                                    >
+                                                        <Zap className="w-3.5 h-3.5" />
+                                                        Activate Domain
+                                                    </Button>
+                                                )}
+                                                {is_super_admin && domain.provisioning?.can_retry && (
+                                                    <Button
+                                                        variant="outline"
+                                                        size="sm"
+                                                        onClick={() => handleActivate(domain)}
+                                                        disabled={activatingId === domain.id}
+                                                        className="text-xs text-amber-700 border-amber-300 hover:bg-amber-50 dark:hover:bg-amber-950/30 gap-1"
+                                                    >
+                                                        <RefreshCw className="w-3.5 h-3.5" />
+                                                        Retry Activation
                                                     </Button>
                                                 )}
                                                 {!domain.is_primary && domain.status === 'active' && domain.ssl_status === 'active' && (
@@ -206,6 +264,7 @@ export default function Domains({ domains, cname_target, tenant_base_domain }: P
                                                         variant="ghost"
                                                         size="sm"
                                                         onClick={() => handleDelete(domain)}
+                                                        disabled={domain.provisioning?.is_provisioning}
                                                         className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50 dark:hover:bg-red-950/30"
                                                     >
                                                         <Trash2 className="w-3.5 h-3.5" />
@@ -239,13 +298,12 @@ export default function Domains({ domains, cname_target, tenant_base_domain }: P
                                 <span className="font-semibold text-gray-900 dark:text-gray-100">app (or your subdomain)</span>
                             </div>
                             <div>
-                                <span className="text-gray-500 block">Target / Value</span>
+                                <span className="text-gray-500 block">Target / Destination</span>
                                 <span className="font-semibold text-indigo-600 dark:text-indigo-400">{cname_target}</span>
                             </div>
                         </div>
-
                         <p className="text-xs text-gray-500 dark:text-gray-400">
-                            <strong>Note:</strong> DNS propagation typically takes between 5 to 30 minutes depending on your DNS TTL. Once configured, click &quot;Verify DNS&quot; above to activate your custom domain.
+                            DNS propagation typically takes 5–30 minutes. Once configured, click <strong>Verify DNS</strong>.
                         </p>
                     </CardContent>
                 </Card>

@@ -411,4 +411,31 @@ class AutomatedDomainProvisioningTest extends TestCase
         $this->assertTrue($this->verifiedDomain->fresh()->isActive());
         $this->assertTrue($this->verifiedDomain->fresh()->isResolvable());
     }
+
+    public function test_systemd_service_unit_preserves_sandbox_hardening_and_nginx_pid_exception(): void
+    {
+        $unitPath = base_path('ops/domain-provisioning/studentxces-domain-runner.service');
+        $this->assertFileExists($unitPath);
+
+        $content = file_get_contents($unitPath);
+
+        // Core systemd sandboxing must remain strict and uncompromised
+        $this->assertStringContainsString('ProtectSystem=strict', $content);
+        $this->assertStringContainsString('ProtectHome=true', $content);
+        $this->assertStringContainsString('NoNewPrivileges=true', $content);
+        $this->assertStringContainsString('PrivateTmp=true', $content);
+        $this->assertStringNotContainsString('ProtectSystem=false', $content);
+
+        // Verify ReadWritePaths has required least-privilege paths
+        $this->assertMatchesRegularExpression('/ReadWritePaths=.*\/run\/nginx\.pid/', $content);
+        $this->assertMatchesRegularExpression('/ReadWritePaths=.*\/run\/lock/', $content);
+        $this->assertMatchesRegularExpression('/ReadWritePaths=.*\/etc\/nginx\/studentxces-tenants\.d/', $content);
+        $this->assertMatchesRegularExpression('/ReadWritePaths=.*\/etc\/letsencrypt/', $content);
+        $this->assertMatchesRegularExpression('/ReadWritePaths=.*\/var\/www\/html/', $content);
+
+        // Ensure broad unconfined paths are NOT present
+        $this->assertStringNotContainsString('ReadWritePaths=/run ', $content);
+        $this->assertStringNotContainsString('ReadWritePaths=/ ', $content);
+    }
 }
+

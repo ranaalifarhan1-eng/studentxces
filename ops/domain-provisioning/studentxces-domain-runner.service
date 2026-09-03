@@ -15,7 +15,8 @@ Group=root
 
 # Security Sandboxing & Specific Writable Paths
 ProtectSystem=strict
-ReadWritePaths=/etc/nginx/studentxces-tenants.d /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /var/www/html /run/lock
+ReadWritePaths=/etc/nginx/studentxces-tenants.d /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /var/www/html /run/lock /run/nginx.pid
 ProtectHome=true
 NoNewPrivileges=true
 PrivateTmp=true
+

@@ -6,13 +6,16 @@ Requires=docker.service nginx.service
 [Service]
 Type=oneshot
 ExecStart=/usr/local/sbin/studentxces-domain-runner
+WorkingDirectory=/opt/studentxces
+TimeoutStartSec=300s
 StandardOutput=journal
 StandardError=journal
 User=root
 Group=root
 
-# Security Sandboxing
-ProtectSystem=full
+# Security Sandboxing & Specific Writable Paths
+ProtectSystem=strict
+ReadWritePaths=/etc/nginx/studentxces-tenants.d /etc/letsencrypt /var/lib/letsencrypt /var/log/letsencrypt /var/www/html /run/lock
 ProtectHome=true
 NoNewPrivileges=true
 PrivateTmp=true

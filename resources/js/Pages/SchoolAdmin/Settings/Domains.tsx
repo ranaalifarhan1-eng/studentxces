@@ -203,9 +203,16 @@ export default function Domains({ domains, cname_target, tenant_base_domain, is_
                                                         <ShieldCheck className="w-4 h-4 text-green-600" /> Secure
                                                     </span>
                                                 ) : domain.ssl_status === 'failed' ? (
-                                                    <span className="inline-flex items-center gap-1 text-xs text-red-700 dark:text-red-400 font-medium">
-                                                        <AlertCircle className="w-4 h-4 text-red-600" /> Provisioning Failed
-                                                    </span>
+                                                    <div>
+                                                        <span className="inline-flex items-center gap-1 text-xs text-red-700 dark:text-red-400 font-medium">
+                                                            <AlertCircle className="w-4 h-4 text-red-600" /> Provisioning Failed
+                                                        </span>
+                                                        {domain.provisioning?.max_attempts_reached ? (
+                                                            <span className="block text-[11px] text-red-500 font-normal mt-0.5">Max activation attempts reached</span>
+                                                        ) : domain.provisioning?.retry_cooldown_remaining_seconds && domain.provisioning.retry_cooldown_remaining_seconds > 0 ? (
+                                                            <span className="block text-[11px] text-amber-600 dark:text-amber-400 font-normal mt-0.5">Retry cooldown active</span>
+                                                        ) : null}
+                                                    </div>
                                                 ) : (
                                                     <span className="inline-flex items-center gap-1 text-xs text-amber-700 dark:text-amber-400 font-medium">
                                                         <RefreshCw className="w-4 h-4 text-amber-600" /> Pending SSL

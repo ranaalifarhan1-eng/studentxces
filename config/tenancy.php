@@ -121,7 +121,8 @@ return [
     |--------------------------------------------------------------------------
     |
     | Hostnames that must never be provisioned or mutated by tenant automation.
-    | Combines hardcoded platform hosts with configurable additions.
+    | Platform defaults are permanently protected. Deployment-specific protected
+    | baselines (e.g. existing legacy tenant domains) can be added via environment.
     |
     */
     'protected_hosts' => array_values(array_unique(array_filter(array_merge(
@@ -131,11 +132,27 @@ return [
             'admin.edusystem.store',
             'edusystem.store',
             'app.wamanager.io',
-            'app.lahorecambridge.com',
-            'app.academyofmodernsciences.com',
+            'localhost',
+            '127.0.0.1',
+            '::1',
         ],
         array_map('trim', explode(',', env('DOMAIN_PROVISIONING_PROTECTED_HOSTS', '')))
     )))),
 
+    /*
+    |--------------------------------------------------------------------------
+    | Automated Domain Provisioning Operational Parameters
+    |--------------------------------------------------------------------------
+    |
+    | Timeout and rate-limiting rules governing automated host runner execution.
+    |
+    */
+    'provisioning' => [
+        'running_timeout_minutes' => (int) env('DOMAIN_PROVISIONING_RUNNING_TIMEOUT_MINUTES', 10),
+        'retry_cooldown_minutes'  => (int) env('DOMAIN_PROVISIONING_RETRY_COOLDOWN_MINUTES', 5),
+        'max_attempts'            => (int) env('DOMAIN_PROVISIONING_MAX_ATTEMPTS', 5),
+    ],
+
 ];
+
 

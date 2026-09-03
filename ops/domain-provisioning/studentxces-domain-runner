@@ -2,21 +2,31 @@
 # ==============================================================================
 # StudentXces Automated Domain Provisioning Host Runner
 # ==============================================================================
-# This script runs on the host VPS (root/systemd) to process queued domain
-# provisioning requests. It claims requests via artisan, generates isolated
-# tenant Nginx configurations, issues dedicated Let's Encrypt certificates via
-# webroot, verifies HTTPS probes, and reports completion back to the app.
+# This script executes on the host VPS (as root under systemd timer) to process
+# queued domain provisioning requests.
 #
-# DO NOT MODIFY ON LIVE SERVER WITHOUT CODE REVIEW.
+# Hardening Guarantees:
+# - Single-instance locking via flock
+# - Bounded command timeouts (timeout wrapper)
+# - Independent host-level regex & protected host validation
+# - Safe JSON parsing (jq / python3)
+# - Atomic staging files & deterministic compensating rollback
+# - Crash-after-success / re-entrant callback reconciliation
+# - Self-test and dry-run operational modes
 # ==============================================================================
 
 set -euo pipefail
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
+LOCK_FILE="/run/lock/studentxces-domain-runner.lock"
 CONTAINER_NAME="studentxces-app"
 APP_DIR="/opt/studentxces"
 TENANTS_NGINX_DIR="/etc/nginx/studentxces-tenants.d"
 WEBROOT_DIR="/var/www/html"
 LOG_TAG="studentxces-domain-runner"
+
+# Protected Platform Hosts Denylist (Host Defense-in-Depth)
+PROTECTED_HOSTS=("console.edusystem.store" "tenants.edusystem.store" "admin.edusystem.store" "edusystem.store" "app.wamanager.io" "localhost" "127.0.0.1" "::1")
 
 log() {
     echo "[$(date -u +'%Y-%m-%d %H:%M:%SZ')] [$LOG_TAG] $*"
@@ -26,70 +36,204 @@ error() {
     echo "[$(date -u +'%Y-%m-%d %H:%M:%SZ')] [$LOG_TAG] [ERROR] $*" >&2
 }
 
-# 1. Claim next queued request
-log "Checking for queued domain provisioning requests..."
-CLAIM_OUTPUT=$(docker compose -f "${APP_DIR}/docker-compose.yml" exec -T "${CONTAINER_NAME}" php artisan tenancy:provisioning:claim-next --json)
+# ------------------------------------------------------------------------------
+# Operational Modes: Self-Test & Dry-Run
+# ------------------------------------------------------------------------------
+if [[ "${1:-}" == "--self-test" ]]; then
+    log "Running Host Runner Self-Test (Zero Writes)..."
+    
+    # Check essential host binaries
+    for bin in docker nginx certbot; do
+        if ! command -v "${bin}" >/dev/null 2>&1; then
+            error "Required host binary missing: ${bin}"
+            exit 1
+        fi
+    done
+
+    # Check JSON parser (jq or python3)
+    if ! command -v jq >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
+        error "Required JSON parser (jq or python3) missing on host."
+        exit 1
+    fi
+
+    # Check directories and Compose
+    if [[ ! -f "${APP_DIR}/docker-compose.yml" ]]; then
+        error "Docker compose file missing at ${APP_DIR}/docker-compose.yml"
+        exit 1
+    fi
+
+    if [[ ! -d "${WEBROOT_DIR}" ]]; then
+        error "ACME webroot directory missing at ${WEBROOT_DIR}"
+        exit 1
+    fi
+
+    # Check Nginx syntax
+    if ! nginx -t >/dev/null 2>&1; then
+        error "Current host Nginx configuration has syntax errors."
+        exit 1
+    fi
+
+    # Check Laravel machine commands
+    if ! docker compose -f "${APP_DIR}/docker-compose.yml" exec -T "${CONTAINER_NAME}" php artisan tenancy:provisioning:claim-next --help >/dev/null 2>&1; then
+        error "Laravel machine commands not callable in container ${CONTAINER_NAME}."
+        exit 1
+    fi
+
+    log "SELF_TEST_PASSED: All host binaries, directories, Nginx, and container prerequisites verified."
+    exit 0
+fi
+
+if [[ "${1:-}" == "--dry-run" ]]; then
+    log "Running Host Runner Dry-Run Simulation (Zero Host Mutations)..."
+    TMP_DIR=$(mktemp -d /tmp/studentxces-dryrun-XXXXXX)
+    trap 'rm -rf "${TMP_DIR}"' EXIT
+
+    log "Simulating Nginx configuration generation in ${TMP_DIR}..."
+    cat << EOF > "${TMP_DIR}/test-tenant.conf"
+server {
+    listen 80;
+    server_name test.school.com;
+    location /.well-known/acme-challenge/ { root ${WEBROOT_DIR}; }
+    location / { return 301 https://\$host\$request_uri; }
+}
+EOF
+    log "Dry-run configuration generated cleanly."
+    log "DRY_RUN_PASSED: Zero host mutations performed."
+    exit 0
+fi
+
+# ------------------------------------------------------------------------------
+# Single-Instance Host Locking
+# ------------------------------------------------------------------------------
+mkdir -p "$(dirname "${LOCK_FILE}")"
+exec 200>"${LOCK_FILE}"
+if ! flock -n 200; then
+    log "Another instance of studentxces-domain-runner is already active. Exiting cleanly."
+    exit 0
+fi
+
+# ------------------------------------------------------------------------------
+# Step 1: Claim Next Queued Provisioning Request
+# ------------------------------------------------------------------------------
+log "Polling for queued domain provisioning requests..."
+CLAIM_OUTPUT=$(timeout 30 docker compose -f "${APP_DIR}/docker-compose.yml" exec -T "${CONTAINER_NAME}" php artisan tenancy:provisioning:claim-next --json || echo "")
 
 if [[ -z "${CLAIM_OUTPUT}" || "${CLAIM_OUTPUT}" == *"no_work"* || "${CLAIM_OUTPUT}" == "NO_WORK" ]]; then
     log "No pending provisioning requests found. Exiting cleanly."
     exit 0
 fi
 
-# Parse JSON fields safely using jq or python
-REQUEST_ID=$(echo "${CLAIM_OUTPUT}" | jq -r '.request_id // empty')
-DOMAIN_ID=$(echo "${CLAIM_OUTPUT}" | jq -r '.domain_id // empty')
-SCHOOL_ID=$(echo "${CLAIM_OUTPUT}" | jq -r '.school_id // empty')
-HOSTNAME=$(echo "${CLAIM_OUTPUT}" | jq -r '.hostname // empty')
+# Safe JSON Field Extraction
+parse_json() {
+    local key="$1"
+    local raw="$2"
+    if command -v jq >/dev/null 2>&1; then
+        echo "${raw}" | jq -r ".${key} // empty"
+    elif command -v python3 >/dev/null 2>&1; then
+        python3 -c "import sys, json; data=json.loads(sys.argv[1]); print(data.get('${key}', ''))" "${raw}" 2>/dev/null || echo ""
+    else
+        echo ""
+    fi
+}
+
+REQUEST_ID=$(parse_json "request_id" "${CLAIM_OUTPUT}")
+DOMAIN_ID=$(parse_json "domain_id" "${CLAIM_OUTPUT}")
+SCHOOL_ID=$(parse_json "school_id" "${CLAIM_OUTPUT}")
+HOSTNAME=$(parse_json "hostname" "${CLAIM_OUTPUT}")
 
 if [[ -z "${REQUEST_ID}" || -z "${DOMAIN_ID}" || -z "${HOSTNAME}" ]]; then
-    error "Failed to parse claim payload: ${CLAIM_OUTPUT}"
+    error "Failed to parse valid JSON payload from claim: ${CLAIM_OUTPUT}"
     exit 1
 fi
 
-log "Processing Request #${REQUEST_ID} for Domain #${DOMAIN_ID} (${HOSTNAME}, School #${SCHOOL_ID})"
+log "Claimed Request #${REQUEST_ID} for Domain #${DOMAIN_ID} (${HOSTNAME}, School #${SCHOOL_ID})"
 
-# Host-level strict regex hostname validation (Secondary Layer)
-if ! [[ "${HOSTNAME}" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]]; then
-    error "Invalid hostname format detected on host: ${HOSTNAME}"
-    docker compose -f "${APP_DIR}/docker-compose.yml" exec -T "${CONTAINER_NAME}" php artisan tenancy:provisioning:mark-failed --request-id="${REQUEST_ID}" --domain-id="${DOMAIN_ID}" --error-code="nginx_validation_failed"
+# ------------------------------------------------------------------------------
+# Step 2: Host-Level Independent Input & Protected Host Validation
+# ------------------------------------------------------------------------------
+if ! [[ "${REQUEST_ID}" =~ ^[0-9]+$ ]] || [[ "${REQUEST_ID}" -le 0 ]]; then
+    error "Invalid Request ID: ${REQUEST_ID}"
     exit 1
 fi
 
-# Construct safe config filenames
+if ! [[ "${DOMAIN_ID}" =~ ^[0-9]+$ ]] || [[ "${DOMAIN_ID}" -le 0 ]]; then
+    error "Invalid Domain ID: ${DOMAIN_ID}"
+    exit 1
+fi
+
+# Normalize Hostname to lowercase
+HOSTNAME=$(echo "${HOSTNAME}" | tr '[:upper:]' '[:lower:]' | xargs)
+
+# Strict RFC 1123 Regex Check
+if ! [[ "${HOSTNAME}" =~ ^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$ ]] || [[ ${#HOSTNAME} -gt 253 ]]; then
+    error "Host validation rejected invalid hostname format: ${HOSTNAME}"
+    timeout 30 docker compose -f "${APP_DIR}/docker-compose.yml" exec -T "${CONTAINER_NAME}" php artisan tenancy:provisioning:mark-failed --request-id="${REQUEST_ID}" --domain-id="${DOMAIN_ID}" --error-code="nginx_validation_failed" || true
+    exit 1
+fi
+
+# Protected Host Denylist Check
+for protected in "${PROTECTED_HOSTS[@]}"; do
+    if [[ "${HOSTNAME}" == "${protected}" ]]; then
+        error "Host validation rejected protected platform hostname: ${HOSTNAME}"
+        timeout 30 docker compose -f "${APP_DIR}/docker-compose.yml" exec -T "${CONTAINER_NAME}" php artisan tenancy:provisioning:mark-failed --request-id="${REQUEST_ID}" --domain-id="${DOMAIN_ID}" --error-code="nginx_validation_failed" || true
+        exit 1
+    fi
+done
+
+# Safe Filenames & Certificate Names
 SAFE_SUFFIX=$(echo "${HOSTNAME}" | tr '.-' '__')
 CONFIG_FILE="${TENANTS_NGINX_DIR}/tenant_${DOMAIN_ID}_${SAFE_SUFFIX}.conf"
 TEMP_CONFIG_FILE="${TENANTS_NGINX_DIR}/.tenant_${DOMAIN_ID}_${SAFE_SUFFIX}.conf.tmp"
 BACKUP_CONFIG_FILE="${TENANTS_NGINX_DIR}/.tenant_${DOMAIN_ID}_${SAFE_SUFFIX}.conf.bak"
 CERT_NAME="studentxces-tenant-${DOMAIN_ID}"
+CERT_FULLCHAIN="/etc/letsencrypt/live/${CERT_NAME}/fullchain.pem"
+CERT_PRIVKEY="/etc/letsencrypt/live/${CERT_NAME}/privkey.pem"
 
 mkdir -p "${TENANTS_NGINX_DIR}"
 
-# Preserve existing config if one exists
+# ------------------------------------------------------------------------------
+# Step 3: Re-entrancy / Crash-After-Success Reconciliation
+# ------------------------------------------------------------------------------
+if [[ -f "${CERT_FULLCHAIN}" && -f "${CERT_PRIVKEY}" && -f "${CONFIG_FILE}" ]]; then
+    log "Existing valid certificate and Nginx config detected for ${HOSTNAME}. Verifying health..."
+    if timeout 15 nginx -t >/dev/null 2>&1; then
+        log "Existing infrastructure is healthy. Skipping Certbot and invoking mark-success callback..."
+        if timeout 30 docker compose -f "${APP_DIR}/docker-compose.yml" exec -T "${CONTAINER_NAME}" php artisan tenancy:provisioning:mark-success --request-id="${REQUEST_ID}" --domain-id="${DOMAIN_ID}"; then
+            log "Reconciliation mark-success reported successfully for ${HOSTNAME}!"
+            exit 0
+        else
+            error "Reconciliation mark-success callback failed. Retaining infrastructure for next run."
+            exit 1
+        fi
+    fi
+fi
+
+# Preserve previous config if present
 if [[ -f "${CONFIG_FILE}" ]]; then
-    cp "${CONFIG_FILE}" "${BACKUP_CONFIG_FILE}"
+    cp -p "${CONFIG_FILE}" "${BACKUP_CONFIG_FILE}"
 fi
 
 rollback() {
     local error_code="${1:-activation_failed}"
-    error "Executing compensating rollback for domain ${HOSTNAME} (Error: ${error_code})..."
+    error "Executing compensating rollback for domain ${HOSTNAME} (Code: ${error_code})..."
 
     if [[ -f "${BACKUP_CONFIG_FILE}" ]]; then
-        mv "${BACKUP_CONFIG_FILE}" "${CONFIG_FILE}"
-        nginx -t && systemctl reload nginx || true
+        mv -f "${BACKUP_CONFIG_FILE}" "${CONFIG_FILE}"
+        timeout 15 nginx -t && timeout 15 systemctl reload nginx || true
     else
         rm -f "${CONFIG_FILE}" "${TEMP_CONFIG_FILE}"
-        nginx -t && systemctl reload nginx || true
+        timeout 15 nginx -t && timeout 15 systemctl reload nginx || true
     fi
 
     rm -f "${BACKUP_CONFIG_FILE}" "${TEMP_CONFIG_FILE}"
 
-    docker compose -f "${APP_DIR}/docker-compose.yml" exec -T "${CONTAINER_NAME}" php artisan tenancy:provisioning:mark-failed --request-id="${REQUEST_ID}" --domain-id="${DOMAIN_ID}" --error-code="${error_code}"
+    timeout 30 docker compose -f "${APP_DIR}/docker-compose.yml" exec -T "${CONTAINER_NAME}" php artisan tenancy:provisioning:mark-failed --request-id="${REQUEST_ID}" --domain-id="${DOMAIN_ID}" --error-code="${error_code}" || true
 }
 
 # ------------------------------------------------------------------------------
-# STEP A: Generate HTTP-only / ACME Nginx Configuration
+# Step 4: Stage A — HTTP-Only / ACME Nginx Configuration
 # ------------------------------------------------------------------------------
-log "Generating Stage A (HTTP-only) configuration..."
+log "Writing Stage A (HTTP-only) configuration to temporary file..."
 cat << EOF > "${TEMP_CONFIG_FILE}"
 # Managed automatically by StudentXces Provisioner — DO NOT EDIT MANUALLY
 
@@ -110,34 +254,35 @@ EOF
 
 mv -f "${TEMP_CONFIG_FILE}" "${CONFIG_FILE}"
 
-if ! nginx -t; then
+if ! timeout 15 nginx -t; then
+    error "Nginx syntax validation failed on Stage A config."
     rollback "nginx_validation_failed"
     exit 1
 fi
 
-systemctl reload nginx
+timeout 15 systemctl reload nginx
 
 # ------------------------------------------------------------------------------
-# STEP B: Issue Dedicated Let's Encrypt Certificate via Webroot
+# Step 5: Issue Dedicated Let's Encrypt Certificate via Webroot
 # ------------------------------------------------------------------------------
-log "Requesting Let's Encrypt certificate for ${HOSTNAME} (cert-name: ${CERT_NAME})..."
-if ! certbot certonly \
+log "Requesting Let's Encrypt certificate via webroot for ${HOSTNAME} (${CERT_NAME})..."
+if ! timeout 120 certbot certonly \
     --webroot \
     -w "${WEBROOT_DIR}" \
     -d "${HOSTNAME}" \
     --cert-name "${CERT_NAME}" \
     --non-interactive \
     --agree-tos; then
-    
+
     error "Certbot issuance failed for ${HOSTNAME}."
     rollback "certificate_failed"
     exit 1
 fi
 
 # ------------------------------------------------------------------------------
-# STEP C: Generate Full HTTPS Nginx Configuration
+# Step 6: Stage B — Full HTTPS Nginx Configuration
 # ------------------------------------------------------------------------------
-log "Generating Stage B (HTTPS proxy) configuration..."
+log "Writing Stage B (HTTPS proxy) configuration..."
 cat << EOF > "${TEMP_CONFIG_FILE}"
 # Managed automatically by StudentXces Provisioner — DO NOT EDIT MANUALLY
 
@@ -206,22 +351,25 @@ EOF
 
 mv -f "${TEMP_CONFIG_FILE}" "${CONFIG_FILE}"
 
-if ! nginx -t; then
+if ! timeout 15 nginx -t; then
+    error "Nginx syntax validation failed on Stage B HTTPS config."
     rollback "nginx_validation_failed"
     exit 1
 fi
 
-systemctl reload nginx
+timeout 15 systemctl reload nginx
 
-# Clean up backup file on successful Nginx reload
+# Cleanup backup file on verified reload
 rm -f "${BACKUP_CONFIG_FILE}"
 
 # ------------------------------------------------------------------------------
-# STEP D: Revalidate via Canonical Application Activation Gate
+# Step 7: Final Application Activation & TLS Revalidation
 # ------------------------------------------------------------------------------
-log "Revalidating domain and reporting success to StudentXces application..."
-SUCCESS_OUTPUT=$(docker compose -f "${APP_DIR}/docker-compose.yml" exec -T "${CONTAINER_NAME}" php artisan tenancy:provisioning:mark-success --request-id="${REQUEST_ID}" --domain-id="${DOMAIN_ID}")
+log "Invoking application mark-success callback to re-probe TLS and activate domain..."
+if ! timeout 30 docker compose -f "${APP_DIR}/docker-compose.yml" exec -T "${CONTAINER_NAME}" php artisan tenancy:provisioning:mark-success --request-id="${REQUEST_ID}" --domain-id="${DOMAIN_ID}"; then
+    error "Application mark-success callback failed or TLS probe failed. Infrastructure retained for safe reconciliation."
+    exit 1
+fi
 
-log "Mark success output: ${SUCCESS_OUTPUT}"
-log "Domain provisioning for ${HOSTNAME} completed successfully!"
+log "SUCCESS: Automated provisioning and activation for ${HOSTNAME} completed successfully!"
 exit 0

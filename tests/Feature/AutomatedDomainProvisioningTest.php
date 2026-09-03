@@ -14,6 +14,7 @@ use App\Services\HttpsProbeInterface;
 use App\Services\NginxTenantConfigGenerator;
 use App\Services\TenantHostnameValidator;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Config;
 use Spatie\Permission\Models\Role;
 use Tests\TestCase;
 
@@ -177,6 +178,29 @@ class AutomatedDomainProvisioningTest extends TestCase
         TenantHostnameValidator::validate('console.edusystem.store');
     }
 
+    public function test_configured_protected_tenant_baselines_are_rejected(): void
+    {
+        Config::set('tenancy.protected_hosts', [
+            'console.edusystem.store',
+            'app.lahorecambridge.com',
+            'app.academyofmodernsciences.com',
+        ]);
+
+        $this->expectException(\InvalidArgumentException::class);
+        TenantHostnameValidator::validate('app.lahorecambridge.com');
+    }
+
+    public function test_unrelated_future_tenant_domain_is_allowed(): void
+    {
+        Config::set('tenancy.protected_hosts', [
+            'console.edusystem.store',
+            'app.lahorecambridge.com',
+        ]);
+
+        $normalized = TenantHostnameValidator::validate('app.newschoolsystem.edu.pk');
+        $this->assertEquals('app.newschoolsystem.edu.pk', $normalized);
+    }
+
     public function test_inactive_school_domain_is_rejected(): void
     {
         $this->school->update(['status' => 'suspended']);
@@ -200,6 +224,74 @@ class AutomatedDomainProvisioningTest extends TestCase
         // Second claim attempt should find null
         $secondClaim = $this->provisioningService->claimNextRequest();
         $this->assertNull($secondClaim);
+    }
+
+    public function test_stale_running_request_becomes_provisioning_timeout(): void
+    {
+        $this->provisioningService->requestProvisioning($this->verifiedDomain, $this->superAdmin);
+        $req = $this->provisioningService->claimNextRequest();
+
+        // Simulate request started 15 minutes ago (exceeding 10m timeout)
+        $req->update(['started_at' => now()->subMinutes(15)]);
+
+        $recovered = $this->provisioningService->recoverStaleRequests(10);
+        $this->assertEquals(1, $recovered);
+
+        $freshReq = $req->fresh();
+        $this->assertEquals(DomainProvisioningRequest::STATUS_FAILED, $freshReq->status);
+        $this->assertEquals(DomainProvisioningRequest::ERROR_PROVISIONING_TIMEOUT, $freshReq->safe_error_code);
+        $this->assertEquals(SchoolDomain::SSL_FAILED, $this->verifiedDomain->fresh()->ssl_status);
+        $this->assertEquals(SchoolDomain::STATUS_VERIFIED, $this->verifiedDomain->fresh()->status);
+    }
+
+    public function test_stale_recovery_command_is_idempotent(): void
+    {
+        $this->artisan('tenancy:provisioning:recover-stale')
+            ->assertExitCode(0)
+            ->expectsOutputToContain('Zero stale requests found.');
+    }
+
+    public function test_retry_cooldown_is_enforced(): void
+    {
+        Config::set('tenancy.provisioning.retry_cooldown_minutes', 5);
+
+        $this->provisioningService->requestProvisioning($this->verifiedDomain, $this->superAdmin);
+        $req = $this->provisioningService->claimNextRequest();
+
+        // Mark failed 1 minute ago (within 5m cooldown)
+        $this->provisioningService->markFailed($req->id, $this->verifiedDomain->id, 'certificate_failed');
+        $req->fresh()->update(['completed_at' => now()->subMinute()]);
+
+        // Attempt retry during cooldown
+        $retryResult = $this->provisioningService->requestProvisioning($this->verifiedDomain, $this->superAdmin);
+        $this->assertFalse($retryResult['success']);
+        $this->assertEquals('cooldown_active', $retryResult['code']);
+
+        // Advance time past cooldown (6 minutes ago)
+        $req->fresh()->update(['completed_at' => now()->subMinutes(6)]);
+
+        $retryAllowed = $this->provisioningService->requestProvisioning($this->verifiedDomain, $this->superAdmin);
+        $this->assertTrue($retryAllowed['success']);
+        $this->assertEquals('queued', $retryAllowed['code']);
+    }
+
+    public function test_max_attempts_is_enforced(): void
+    {
+        Config::set('tenancy.provisioning.max_attempts', 3);
+
+        $req = DomainProvisioningRequest::create([
+            'school_domain_id' => $this->verifiedDomain->id,
+            'requested_by'     => $this->superAdmin->id,
+            'action'           => DomainProvisioningRequest::ACTION_PROVISION,
+            'status'           => DomainProvisioningRequest::STATUS_FAILED,
+            'attempt_count'    => 3,
+            'safe_error_code'  => 'certificate_failed',
+            'completed_at'     => now()->subHours(1),
+        ]);
+
+        $result = $this->provisioningService->requestProvisioning($this->verifiedDomain, $this->superAdmin);
+        $this->assertFalse($result['success']);
+        $this->assertEquals('max_attempts_reached', $result['code']);
     }
 
     public function test_mismatched_request_and_domain_id_callback_is_rejected(): void
@@ -237,6 +329,23 @@ class AutomatedDomainProvisioningTest extends TestCase
         $this->assertEquals(SchoolDomain::SSL_ACTIVE, $this->verifiedDomain->fresh()->ssl_status);
         $this->assertEquals(DomainProvisioningRequest::STATUS_SUCCEEDED, $req->fresh()->status);
         $this->assertNotNull($req->fresh()->completed_at);
+    }
+
+    public function test_re_entrant_success_after_infrastructure_ready(): void
+    {
+        $this->provisioningService->requestProvisioning($this->verifiedDomain, $this->superAdmin);
+        $req = $this->provisioningService->claimNextRequest();
+
+        $mockPassingProbe = new class implements HttpsProbeInterface {
+            public function probe(string $h): array { return ['success' => true, 'message' => 'OK']; }
+        };
+
+        $this->provisioningService->markSuccess($req->id, $this->verifiedDomain->id, $mockPassingProbe);
+
+        // Re-invoking markSuccess on already succeeded request is idempotent
+        $res = $this->provisioningService->markSuccess($req->id, $this->verifiedDomain->id, $mockPassingProbe);
+        $this->assertTrue($res['success']);
+        $this->assertStringContainsString('already verified and active', $res['message']);
     }
 
     public function test_failed_callback_does_not_mark_domain_active_and_records_safe_error(): void

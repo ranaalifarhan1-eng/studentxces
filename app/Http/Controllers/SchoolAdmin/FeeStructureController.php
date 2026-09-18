@@ -47,11 +47,13 @@ class FeeStructureController extends Controller
             'frequency'       => 'required|in:monthly,quarterly,annual,one_time',
             'description'     => 'nullable|string|max:255',
             'is_active'       => 'boolean',
+            'is_optional'     => 'boolean',
         ]);
 
         FeeStructure::create(array_merge($data, [
-            'school_id' => $sid,
-            'is_active' => $data['is_active'] ?? true,
+            'school_id'   => $sid,
+            'is_active'   => $data['is_active'] ?? true,
+            'is_optional' => $data['is_optional'] ?? false,
         ]));
 
         return back()->with('success', 'Fee structure created.');
@@ -70,6 +72,7 @@ class FeeStructureController extends Controller
             'frequency'       => 'required|in:monthly,quarterly,annual,one_time',
             'description'     => 'nullable|string|max:255',
             'is_active'       => 'boolean',
+            'is_optional'     => 'boolean',
         ]);
 
         $feeStructure->update($data);

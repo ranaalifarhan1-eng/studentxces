@@ -73,6 +73,16 @@ class Student extends Model
         return $this->hasMany(FeePayment::class);
     }
 
+    public function feeAssignments(): HasMany
+    {
+        return $this->hasMany(StudentFeeAssignment::class);
+    }
+
+    public function activeFeeAssignments(): HasMany
+    {
+        return $this->hasMany(StudentFeeAssignment::class)->where('is_active', true);
+    }
+
     protected static function booted(): void
     {
         parent::booted();

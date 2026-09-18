@@ -38,7 +38,7 @@ class RolePermissionSeeder extends Seeder
         'reportcard.generate',
 
         // Fees
-        'fees.view', 'fees.collect', 'fees.structure', 'fees.reports', 'fees.waiver',
+        'fees.view', 'fees.collect', 'fees.structure', 'fees.assign', 'fees.discount', 'fees.reports', 'fees.waiver',
         'fees.online', 'expenses.view', 'expenses.create',
 
         // Payroll & HR
@@ -120,7 +120,7 @@ class RolePermissionSeeder extends Seeder
 
         'accountant' => [
             'students.view',
-            'fees.view', 'fees.collect', 'fees.structure', 'fees.reports', 'fees.waiver', 'fees.online',
+            'fees.view', 'fees.collect', 'fees.structure', 'fees.assign', 'fees.reports', 'fees.waiver', 'fees.online',
             'expenses.view', 'expenses.create',
             'payroll.view', 'payroll.generate', 'payslip.download',
             'reports.view', 'reports.export',

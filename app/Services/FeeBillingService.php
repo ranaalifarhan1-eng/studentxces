@@ -8,6 +8,7 @@ use App\Models\FeeChallanItem;
 use App\Models\FeeStructure;
 use App\Models\SchoolClass;
 use App\Models\Student;
+use App\Models\StudentFeeAssignment;
 use App\Models\StudentFeeDiscount;
 use Carbon\Carbon;
 use Illuminate\Support\Collection;
@@ -297,6 +298,84 @@ class FeeBillingService
     }
 
     /**
+     * Authoritatively resolve all eligible fee structures for a student in a billing period.
+     * Enforces the transition rule between legacy uninitialized students and assignment-initialized students.
+     *
+     * Case A (Legacy / Uninitialized):
+     *   No StudentFeeAssignment records have EVER existed for this student + academic year.
+     *   Fallback to all active mandatory class fee structures (is_optional = false).
+     *
+     * Case B (Initialized):
+     *   One or more StudentFeeAssignment records exist (even if deactivated).
+     *   Bill ONLY active assignments valid for the billing period.
+     *   NEVER fall back to class mandatory fees if all assignments are inactive.
+     */
+    public static function resolveBillableStructures(Student $student, AcademicYear $academicYear, Carbon $targetMonth): Collection
+    {
+        $sid = $student->school_id;
+
+        // Determine if the assignment system has been initialized for this student and academic year
+        $hasAnyAssignments = StudentFeeAssignment::where('school_id', $sid)
+            ->where('student_id', $student->id)
+            ->where('academic_year_id', $academicYear->id)
+            ->exists();
+
+        if (! $hasAnyAssignments) {
+            // Case A: Legacy student fallback -> All active mandatory structures for class & academic year
+            $structures = FeeStructure::with('feeCategory:id,name')
+                ->where('school_id', $sid)
+                ->where('class_id', $student->class_id)
+                ->where('academic_year', $academicYear->name)
+                ->where('is_active', true)
+                ->where('is_optional', false)
+                ->get();
+
+            if ($structures->isEmpty()) {
+                // Fallback: search without academic_year if none found (legacy compatibility)
+                $structures = FeeStructure::with('feeCategory:id,name')
+                    ->where('school_id', $sid)
+                    ->where('class_id', $student->class_id)
+                    ->where('is_active', true)
+                    ->where('is_optional', false)
+                    ->get();
+            }
+
+            return $structures;
+        }
+
+        // Case B: Initialized student -> Only active assignments valid for the target month
+        $monthStart = $targetMonth->copy()->startOfMonth()->toDateString();
+        $monthEnd   = $targetMonth->copy()->endOfMonth()->toDateString();
+
+        $activeAssignments = StudentFeeAssignment::where('school_id', $sid)
+            ->where('student_id', $student->id)
+            ->where('academic_year_id', $academicYear->id)
+            ->where('is_active', true)
+            ->where('starts_on', '<=', $monthEnd)
+            ->where(function ($query) use ($monthStart) {
+                $query->whereNull('ends_on')
+                    ->orWhere('ends_on', '>=', $monthStart);
+            })
+            ->with(['feeStructure.feeCategory:id,name'])
+            ->get();
+
+        if ($activeAssignments->isEmpty()) {
+            // Invariant: Do NOT fall back to class fees if initialized but inactive
+            return collect();
+        }
+
+        $structures = collect();
+        foreach ($activeAssignments as $assignment) {
+            $st = $assignment->feeStructure;
+            if ($st && $st->is_active && $st->school_id === $sid && $st->class_id === $student->class_id) {
+                $structures->push($st);
+            }
+        }
+
+        return $structures;
+    }
+
+    /**
      * Generate an issued FeeChallan with line items atomically.
      */
     public static function createChallan(
@@ -310,22 +389,8 @@ class FeeBillingService
         $sid = $student->school_id;
         $dueDate = $dueDate ?? $targetMonth->copy()->endOfMonth();
 
-        // 1. Fetch active fee structures for the student's class and academic year
-        $structures = FeeStructure::with('feeCategory:id,name')
-            ->where('school_id', $sid)
-            ->where('class_id', $student->class_id)
-            ->where('academic_year', $academicYear->name)
-            ->where('is_active', true)
-            ->get();
-
-        if ($structures->isEmpty()) {
-            // Fallback: search without academic_year if none found
-            $structures = FeeStructure::with('feeCategory:id,name')
-                ->where('school_id', $sid)
-                ->where('class_id', $student->class_id)
-                ->where('is_active', true)
-                ->get();
-        }
+        // 1. Authoritatively resolve eligible fee structures
+        $structures = self::resolveBillableStructures($student, $academicYear, $targetMonth);
 
         if ($structures->isEmpty()) {
             return null;

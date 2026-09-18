@@ -60,9 +60,18 @@ class ReportController extends Controller
             ->whereYear('payment_date', now()->year)
             ->sum('amount_paid');
 
-        $pendingFees = FeePayment::where('school_id', $sid)
-            ->where('status', 'pending')
-            ->sum(DB::raw('amount_due - amount_paid'));
+        $modernOutstanding = (float) \App\Models\FeeChallan::where('school_id', $sid)
+            ->whereIn('status', ['unpaid', 'partial'])
+            ->selectRaw('SUM(total_payable - paid_amount) as bal')
+            ->value('bal');
+
+        $legacyOutstanding = (float) FeePayment::where('school_id', $sid)
+            ->whereNull('fee_challan_id')
+            ->whereIn('status', ['pending', 'partial', 'overdue'])
+            ->selectRaw('SUM(amount_due + fine - discount - amount_paid) as bal')
+            ->value('bal');
+
+        $pendingFees = $modernOutstanding + $legacyOutstanding;
 
         // Monthly fee collection for last 6 months (single aggregated query)
         $sixMonthsAgo = now()->subMonths(5)->startOfMonth();
@@ -130,7 +139,19 @@ class ReportController extends Controller
     private function accountantDashboard(int $sid): array
     {
         $todayCollection = FeePayment::where('school_id', $sid)->whereDate('payment_date', today())->sum('amount_paid');
-        $outstanding     = FeePayment::where('school_id', $sid)->where('status', 'pending')->sum(DB::raw('amount_due - amount_paid'));
+        
+        $modernOutstanding = (float) \App\Models\FeeChallan::where('school_id', $sid)
+            ->whereIn('status', ['unpaid', 'partial'])
+            ->selectRaw('SUM(total_payable - paid_amount) as bal')
+            ->value('bal');
+
+        $legacyOutstanding = (float) FeePayment::where('school_id', $sid)
+            ->whereNull('fee_challan_id')
+            ->whereIn('status', ['pending', 'partial', 'overdue'])
+            ->selectRaw('SUM(amount_due + fine - discount - amount_paid) as bal')
+            ->value('bal');
+
+        $outstanding     = $modernOutstanding + $legacyOutstanding;
         $monthFees       = FeePayment::where('school_id', $sid)->whereMonth('payment_date', now()->month)->whereYear('payment_date', now()->year)->sum('amount_paid');
 
         $feeChart = [];
@@ -284,9 +305,18 @@ class ReportController extends Controller
             ->whereBetween('payment_date', [$from, $to])
             ->sum('amount_paid');
 
-        $outstanding = FeePayment::where('school_id', $sid)
-            ->where('status', 'pending')
-            ->sum(DB::raw('amount_due - amount_paid'));
+        $modernOutstanding = (float) \App\Models\FeeChallan::where('school_id', $sid)
+            ->whereIn('status', ['unpaid', 'partial'])
+            ->selectRaw('SUM(total_payable - paid_amount) as bal')
+            ->value('bal');
+
+        $legacyOutstanding = (float) FeePayment::where('school_id', $sid)
+            ->whereNull('fee_challan_id')
+            ->whereIn('status', ['pending', 'partial', 'overdue'])
+            ->selectRaw('SUM(amount_due + fine - discount - amount_paid) as bal')
+            ->value('bal');
+
+        $outstanding = $modernOutstanding + $legacyOutstanding;
 
         $payroll = Payroll::where('school_id', $sid)
             ->where('month_year', now()->format('Y-m'))

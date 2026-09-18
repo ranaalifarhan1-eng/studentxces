@@ -53,9 +53,11 @@ class TenantSecurityHardeningTest extends TestCase
         Storage::fake('private');
         Storage::fake('public');
 
-        // Ensure roles exist
-        Role::firstOrCreate(['name' => 'school-admin', 'guard_name' => 'web']);
+        // Ensure roles and permissions exist
+        $adminRole = Role::firstOrCreate(['name' => 'school-admin', 'guard_name' => 'web']);
         Role::firstOrCreate(['name' => 'super-admin', 'guard_name' => 'web']);
+        \Spatie\Permission\Models\Permission::firstOrCreate(['name' => 'fees.collect', 'guard_name' => 'web']);
+        $adminRole->givePermissionTo('fees.collect');
 
         // Create School A
         $this->schoolA = School::create([

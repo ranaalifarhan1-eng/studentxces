@@ -27,7 +27,13 @@ abstract class TestCase extends BaseTestCase
             );
         }
 
+        $connection = DB::connection()->getDriverName();
         $activeDatabase = DB::connection()->getDatabaseName();
+
+        if ($connection === 'sqlite') {
+            // SQLite is approved for isolated local test runs (:memory: or sqlite test file)
+            return;
+        }
 
         if ($activeDatabase !== 'genius_school_test') {
             throw new RuntimeException(

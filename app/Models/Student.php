@@ -58,6 +58,21 @@ class Student extends Model
         return $this->hasMany(StudentDocument::class);
     }
 
+    public function feeDiscounts(): HasMany
+    {
+        return $this->hasMany(StudentFeeDiscount::class);
+    }
+
+    public function feeChallans(): HasMany
+    {
+        return $this->hasMany(FeeChallan::class);
+    }
+
+    public function feePayments(): HasMany
+    {
+        return $this->hasMany(FeePayment::class);
+    }
+
     protected static function booted(): void
     {
         parent::booted();

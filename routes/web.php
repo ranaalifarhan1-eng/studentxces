@@ -4,6 +4,8 @@ use App\Http\Controllers\Auth\LoginController;
 use App\Http\Controllers\SchoolAdmin\AttendanceController;
 use App\Http\Controllers\SchoolAdmin\ExamController;
 use App\Http\Controllers\SchoolAdmin\FeeCategoryController;
+use App\Http\Controllers\SchoolAdmin\FeeChallanController;
+use App\Http\Controllers\SchoolAdmin\FeeDiscountController;
 use App\Http\Controllers\SchoolAdmin\FeePaymentController;
 use App\Http\Controllers\SchoolAdmin\FeeStructureController;
 use App\Http\Controllers\SchoolAdmin\CommunicationController;
@@ -277,19 +279,40 @@ Route::middleware('auth')->group(function () {
 
             // Fee Management Module
             Route::middleware('school.module:fees')->group(function () {
-                Route::get('fees/categories',                    [FeeCategoryController::class, 'index'])->name('fees.categories.index');
-                Route::post('fees/categories',                   [FeeCategoryController::class, 'store'])->name('fees.categories.store');
-                Route::put('fees/categories/{feeCategory}',      [FeeCategoryController::class, 'update'])->name('fees.categories.update');
-                Route::delete('fees/categories/{feeCategory}',   [FeeCategoryController::class, 'destroy'])->name('fees.categories.destroy');
-                Route::get('fees/structures',                    [FeeStructureController::class, 'index'])->name('fees.structures.index');
-                Route::post('fees/structures',                   [FeeStructureController::class, 'store'])->name('fees.structures.store');
-                Route::put('fees/structures/{feeStructure}',     [FeeStructureController::class, 'update'])->name('fees.structures.update');
-                Route::delete('fees/structures/{feeStructure}',  [FeeStructureController::class, 'destroy'])->name('fees.structures.destroy');
-                Route::get('fees/payments',                      [FeePaymentController::class, 'index'])->name('fees.payments.index');
-                Route::get('fees/payments/collect',              [FeePaymentController::class, 'create'])->name('fees.payments.create');
-                Route::post('fees/payments',                     [FeePaymentController::class, 'store'])->name('fees.payments.store');
-                Route::get('fees/payments/{feePayment}',         [FeePaymentController::class, 'show'])->name('fees.payments.show');
-                Route::get('fees/outstanding',                   [FeePaymentController::class, 'outstanding'])->name('fees.outstanding');
+                // Collection & Payment (fees.collect)
+                Route::middleware('permission:fees.collect')->group(function () {
+                    Route::get('fees/payments/collect',               [FeePaymentController::class, 'create'])->name('fees.payments.create');
+                    Route::post('fees/payments',                      [FeePaymentController::class, 'store'])->name('fees.payments.store');
+                    Route::post('fees/challans',                      [FeeChallanController::class, 'store'])->name('fees.challans.store');
+                    Route::post('fees/challans/bulk',                 [FeeChallanController::class, 'bulkGenerate'])->name('fees.challans.bulk');
+                    Route::post('fees/challans/{feeChallan}/void',    [FeeChallanController::class, 'voidChallan'])->name('fees.challans.void')->whereNumber('feeChallan');
+                });
+
+                // View routes (fees.view)
+                Route::middleware('permission:fees.view')->group(function () {
+                    Route::get('fees/categories',                     [FeeCategoryController::class, 'index'])->name('fees.categories.index');
+                    Route::get('fees/structures',                     [FeeStructureController::class, 'index'])->name('fees.structures.index');
+                    Route::get('fees/payments',                       [FeePaymentController::class, 'index'])->name('fees.payments.index');
+                    Route::get('fees/payments/{feePayment}',          [FeePaymentController::class, 'show'])->name('fees.payments.show')->whereNumber('feePayment');
+                    Route::get('fees/outstanding',                    [FeePaymentController::class, 'outstanding'])->name('fees.outstanding');
+                    Route::get('fees/challans',                       [FeeChallanController::class, 'index'])->name('fees.challans.index');
+                    Route::get('fees/challans-print-bulk',            [FeeChallanController::class, 'printBulk'])->name('fees.challans.print-bulk');
+                    Route::get('fees/challans/{feeChallan}',          [FeeChallanController::class, 'show'])->name('fees.challans.show')->whereNumber('feeChallan');
+                    Route::get('fees/discounts',                      [FeeDiscountController::class, 'index'])->name('fees.discounts.index');
+                });
+
+                // Structure, Category & Discount Management (fees.structure)
+                Route::middleware('permission:fees.structure')->group(function () {
+                    Route::post('fees/categories',                    [FeeCategoryController::class, 'store'])->name('fees.categories.store');
+                    Route::put('fees/categories/{feeCategory}',       [FeeCategoryController::class, 'update'])->name('fees.categories.update');
+                    Route::delete('fees/categories/{feeCategory}',    [FeeCategoryController::class, 'destroy'])->name('fees.categories.destroy');
+                    Route::post('fees/structures',                    [FeeStructureController::class, 'store'])->name('fees.structures.store');
+                    Route::put('fees/structures/{feeStructure}',      [FeeStructureController::class, 'update'])->name('fees.structures.update');
+                    Route::delete('fees/structures/{feeStructure}',   [FeeStructureController::class, 'destroy'])->name('fees.structures.destroy');
+                    Route::post('fees/discounts',                     [FeeDiscountController::class, 'store'])->name('fees.discounts.store');
+                    Route::put('fees/discounts/{studentFeeDiscount}',  [FeeDiscountController::class, 'update'])->name('fees.discounts.update');
+                    Route::delete('fees/discounts/{studentFeeDiscount}',[FeeDiscountController::class, 'destroy'])->name('fees.discounts.destroy');
+                });
             });
 
             // Communication Module

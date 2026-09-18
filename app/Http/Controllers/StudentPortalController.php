@@ -10,6 +10,7 @@ use App\Models\Homework;
 use App\Models\Mark;
 use App\Models\Student;
 use App\Models\Timetable;
+use App\Support\Money;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
@@ -106,20 +107,25 @@ class StudentPortalController extends Controller
             ->orderByDesc('payment_date')
             ->limit(5)
             ->get(['id', 'amount_due', 'amount_paid', 'status', 'month_year', 'payment_date'])
-            ->map(fn ($f) => [
-                'id'        => $f->id,
-                'month'     => $f->month_year,
-                'due'       => (float) $f->amount_due,
-                'paid'      => (float) $f->amount_paid,
-                'balance'   => (float) ($f->amount_due - $f->amount_paid),
-                'status'    => $f->status,
-                'date'      => $f->payment_date ? Carbon::parse($f->payment_date)->format('d M Y') : null,
-            ]);
+            ->map(function ($f) {
+                $dueC  = Money::toCents($f->amount_due);
+                $paidC = Money::toCents($f->amount_paid);
+                $balC  = max(0, $dueC - $paidC);
+                return [
+                    'id'        => $f->id,
+                    'month'     => $f->month_year,
+                    'due'       => Money::toDecimal($dueC),
+                    'paid'      => Money::toDecimal($paidC),
+                    'balance'   => Money::toDecimal($balC),
+                    'status'    => $f->status,
+                    'date'      => $f->payment_date ? Carbon::parse($f->payment_date)->format('d M Y') : null,
+                ];
+            });
 
         $fees = [
-            'total_due'  => (float) ($feeData->total_due ?? 0),
-            'total_paid' => (float) ($feeData->total_paid ?? 0),
-            'balance'    => (float) ($feeData->balance ?? 0),
+            'total_due'  => Money::toDecimal(Money::toCents($feeData->total_due ?? 0)),
+            'total_paid' => Money::toDecimal(Money::toCents($feeData->total_paid ?? 0)),
+            'balance'    => Money::toDecimal(Money::toCents($feeData->balance ?? 0)),
             'recent'     => $recentFees,
         ];
 
@@ -340,34 +346,77 @@ class StudentPortalController extends Controller
         $student = $this->resolveStudent();
         if (! $student) return $this->notLinked('Student/Fees');
 
-        $summary = FeePayment::where('school_id', $student->school_id)
+        $modernDue = \App\Models\FeeChallan::where('school_id', $student->school_id)
             ->where('student_id', $student->id)
-            ->selectRaw('SUM(amount_due) as total_due, SUM(amount_paid) as total_paid, SUM(amount_due - amount_paid) as balance')
-            ->first();
+            ->where('status', '!=', 'void')
+            ->sum('total_payable');
+        $modernDueCents = Money::toCents($modernDue);
+
+        $legacyDue = FeePayment::where('school_id', $student->school_id)
+            ->where('student_id', $student->id)
+            ->whereNull('fee_challan_id')
+            ->sum(DB::raw('amount_due + fine - discount'));
+        $legacyDueCents = Money::toCents($legacyDue);
+
+        $totalPaid = FeePayment::where('school_id', $student->school_id)
+            ->where('student_id', $student->id)
+            ->sum('amount_paid');
+        $totalPaidCents = Money::toCents($totalPaid);
+
+        $totalDueCents = $modernDueCents + $legacyDueCents;
+        $balanceCents = max(0, $totalDueCents - $totalPaidCents);
 
         $payments = FeePayment::where('school_id', $student->school_id)
             ->where('student_id', $student->id)
             ->orderByDesc('payment_date')
-            ->get(['id', 'month_year', 'amount_due', 'amount_paid', 'status', 'payment_date'])
-            ->map(fn ($f) => [
-                'id'           => $f->id,
-                'month'        => $f->month_year,
-                'due'          => (float) $f->amount_due,
-                'paid'         => (float) $f->amount_paid,
-                'balance'      => (float) ($f->amount_due - $f->amount_paid),
-                'status'       => $f->status,
-                'payment_date' => $f->payment_date ? Carbon::parse($f->payment_date)->format('d M Y') : null,
-            ]);
+            ->get(['id', 'receipt_no', 'month_year', 'amount_due', 'amount_paid', 'status', 'payment_date', 'balance_snapshot'])
+            ->map(function ($f) {
+                $dueC  = Money::toCents($f->amount_due);
+                $paidC = Money::toCents($f->amount_paid);
+                $balC  = $f->balance_snapshot !== null ? Money::toCents($f->balance_snapshot) : max(0, $dueC - $paidC);
+                return [
+                    'id'           => $f->id,
+                    'receipt_no'   => $f->receipt_no,
+                    'month'        => $f->month_year,
+                    'due'          => Money::toDecimal($dueC),
+                    'paid'         => Money::toDecimal($paidC),
+                    'balance'      => Money::toDecimal($balC),
+                    'status'       => $f->status,
+                    'payment_date' => $f->payment_date ? Carbon::parse($f->payment_date)->format('d M Y') : null,
+                ];
+            });
+
+        $challans = \App\Models\FeeChallan::where('school_id', $student->school_id)
+            ->where('student_id', $student->id)
+            ->where('status', '!=', 'void')
+            ->latest('issue_date')
+            ->get(['id', 'challan_no', 'billing_period_key', 'due_date', 'total_payable', 'paid_amount', 'status'])
+            ->map(function ($c) {
+                $totC  = Money::toCents($c->total_payable);
+                $paidC = Money::toCents($c->paid_amount);
+                $balC  = max(0, $totC - $paidC);
+                return [
+                    'id'         => $c->id,
+                    'challan_no' => $c->challan_no,
+                    'period'     => $c->billing_period_key,
+                    'due_date'   => $c->due_date ? Carbon::parse($c->due_date)->format('d M Y') : null,
+                    'total'      => Money::toDecimal($totC),
+                    'paid'       => Money::toDecimal($paidC),
+                    'balance'    => Money::toDecimal($balC),
+                    'status'     => $c->status,
+                ];
+            });
 
         return Inertia::render('Student/Fees', [
             'linked'   => true,
             'student'  => ['full_name' => $student->full_name, 'class' => $student->schoolClass?->name],
             'summary'  => [
-                'total_due'  => (float) ($summary->total_due ?? 0),
-                'total_paid' => (float) ($summary->total_paid ?? 0),
-                'balance'    => (float) ($summary->balance ?? 0),
+                'total_due'  => Money::toDecimal($totalDueCents),
+                'total_paid' => Money::toDecimal($totalPaidCents),
+                'balance'    => Money::toDecimal($balanceCents),
             ],
             'payments' => $payments,
+            'challans' => $challans,
         ]);
     }
 

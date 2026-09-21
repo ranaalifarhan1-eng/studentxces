@@ -532,7 +532,8 @@ class TenantSecurityHardeningTest extends TestCase
         ]);
 
         $response->assertSessionHasNoErrors();
-        $response->assertRedirect(route('school.students.index'));
+        $student = Student::where('school_id', $this->schoolA->id)->where('first_name', 'Valid')->first();
+        $response->assertRedirect(route('school.students.show', $student));
 
         $this->assertDatabaseHas('students', [
             'school_id'  => $this->schoolA->id,

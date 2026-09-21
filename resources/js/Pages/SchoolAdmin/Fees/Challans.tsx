@@ -1,4 +1,4 @@
-﻿import { useState } from 'react';
+import { useState } from 'react';
 import { router, Link, useForm } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
 import { Button } from '@/components/ui/button';
@@ -24,6 +24,8 @@ interface ChallanRow {
     total_payable: string;
     paid_amount: string;
     status: string;
+    display_status?: string;
+    settlement_classification?: string;
     issue_date: string;
     due_date: string;
     items?: { id: number; fee_head_name: string; gross_amount: string; net_amount: string }[];
@@ -169,8 +171,15 @@ export default function FeeChallansIndex({ challans, classes, academicYears, cur
                                                 {new Date(c.due_date).toLocaleDateString()}
                                             </TableCell>
                                             <TableCell>
-                                                <Badge className={`capitalize border-0 text-xs ${c.status === 'paid' ? 'bg-green-100 text-green-700' : c.status === 'partial' ? 'bg-amber-100 text-amber-700' : c.status === 'void' ? 'bg-slate-200 text-slate-600' : 'bg-red-100 text-red-700'}`}>
-                                                    {c.status}
+                                                <Badge className={`border-0 text-xs font-medium ${
+                                                    (c.display_status ?? c.status) === 'waived' ? 'bg-purple-100 text-purple-700 border border-purple-200' :
+                                                    (c.display_status ?? c.status) === 'paid_adjusted' ? 'bg-teal-100 text-teal-700 border border-teal-200' :
+                                                    c.status === 'paid' ? 'bg-green-100 text-green-700' :
+                                                    c.status === 'partial' ? 'bg-amber-100 text-amber-700' :
+                                                    c.status === 'void' ? 'bg-slate-200 text-slate-600' :
+                                                    'bg-red-100 text-red-700'
+                                                }`}>
+                                                    {c.settlement_classification ?? (c.display_status || c.status)}
                                                 </Badge>
                                             </TableCell>
                                             <TableCell className="text-right">

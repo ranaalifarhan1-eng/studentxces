@@ -8,6 +8,8 @@ use App\Http\Controllers\SchoolAdmin\FeeChallanController;
 use App\Http\Controllers\SchoolAdmin\FeeDiscountController;
 use App\Http\Controllers\SchoolAdmin\FeePaymentController;
 use App\Http\Controllers\SchoolAdmin\FeeStructureController;
+use App\Http\Controllers\SchoolAdmin\FeeBulkAssignController;
+use App\Http\Controllers\SchoolAdmin\FeeAdjustmentController;
 use App\Http\Controllers\SchoolAdmin\CommunicationController;
 use App\Http\Controllers\SchoolAdmin\DomainController;
 use App\Http\Controllers\SchoolAdmin\IntegrationController;
@@ -113,10 +115,14 @@ Route::middleware('auth')->group(function () {
                 Route::resource('subjects', SubjectController::class)->except(['create', 'edit', 'show']);
                 Route::resource('shifts',   ShiftController::class)->except(['create', 'edit', 'show']);
                 Route::resource('holidays', HolidayController::class)->except(['create', 'edit', 'show']);
+                Route::get('students/fee-structures',              [StudentController::class, 'feeStructures'])->name('students.fee-structures');
                 Route::resource('students', StudentController::class);
                 Route::post('students/{student}/documents',        [StudentController::class, 'uploadDocument'])->name('students.documents.upload');
                 Route::get('students/documents/{document}/download', [StudentController::class, 'downloadDocument'])->name('students.documents.download');
                 Route::delete('students/documents/{document}',     [StudentController::class, 'deleteDocument'])->name('students.documents.delete');
+                Route::post('students/{student}/portal-access',                [StudentController::class, 'createPortalAccess'])->name('students.portal-access.create');
+                Route::patch('students/{student}/portal-access/status',        [StudentController::class, 'togglePortalAccessStatus'])->name('students.portal-access.status');
+                Route::post('students/{student}/portal-access/reset-password', [StudentController::class, 'resetPortalPassword'])->name('students.portal-access.reset-password');
 
                 // Admission Inquiries & Visitors
                 Route::get('admissions/inquiries',                          [AdmissionInquiryController::class, 'index'])->name('admissions.inquiries');
@@ -286,6 +292,7 @@ Route::middleware('auth')->group(function () {
                     Route::post('fees/challans',                      [FeeChallanController::class, 'store'])->name('fees.challans.store');
                     Route::post('fees/challans/bulk',                 [FeeChallanController::class, 'bulkGenerate'])->name('fees.challans.bulk');
                     Route::post('fees/challans/{feeChallan}/void',    [FeeChallanController::class, 'voidChallan'])->name('fees.challans.void')->whereNumber('feeChallan');
+                    Route::post('fees/challans/{feeChallan}/adjustments', [FeeAdjustmentController::class, 'store'])->name('fees.challans.adjustments.store')->whereNumber('feeChallan');
                 });
 
                 // View routes (fees.view)
@@ -309,9 +316,18 @@ Route::middleware('auth')->group(function () {
                     Route::post('fees/structures',                    [FeeStructureController::class, 'store'])->name('fees.structures.store');
                     Route::put('fees/structures/{feeStructure}',      [FeeStructureController::class, 'update'])->name('fees.structures.update');
                     Route::delete('fees/structures/{feeStructure}',   [FeeStructureController::class, 'destroy'])->name('fees.structures.destroy');
+                    Route::post('fees/structures/{feeStructure}/copy',[FeeStructureController::class, 'copy'])->name('fees.structures.copy')->whereNumber('feeStructure');
                     Route::post('fees/discounts',                     [FeeDiscountController::class, 'store'])->name('fees.discounts.store');
                     Route::put('fees/discounts/{studentFeeDiscount}',  [FeeDiscountController::class, 'update'])->name('fees.discounts.update');
                     Route::delete('fees/discounts/{studentFeeDiscount}',[FeeDiscountController::class, 'destroy'])->name('fees.discounts.destroy');
+                });
+
+                // Bulk Fee Operations (fees.bulk_bill)
+                Route::middleware('permission:fees.bulk_bill')->group(function () {
+                    Route::get('fees/structures/bulk-assign',              [FeeBulkAssignController::class, 'index'])->name('fees.structures.bulk-assign');
+                    Route::post('fees/structures/bulk-assign/preview',     [FeeBulkAssignController::class, 'preview'])->name('fees.structures.bulk-assign.preview');
+                    Route::post('fees/structures/bulk-assign/execute',     [FeeBulkAssignController::class, 'execute'])->name('fees.structures.bulk-assign.execute');
+                    Route::get('fees/structures/classes/{schoolClass}/students', [FeeBulkAssignController::class, 'classStudents'])->name('fees.structures.class-students')->whereNumber('schoolClass');
                 });
             });
 

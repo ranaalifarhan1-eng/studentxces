@@ -335,10 +335,15 @@ class StudentFeeAssignmentService
                 ? Carbon::parse($payload['due_date'])
                 : $targetMonth->copy()->endOfMonth();
 
-            $challan = FeeBillingService::createChallan(
+            $firstVoucherStructureIds = isset($payload['first_voucher_structure_ids'])
+                ? (array) $payload['first_voucher_structure_ids']
+                : null;
+
+            $challan = FeeBillingService::createAdmissionChallan(
                 $student,
                 $academicYear,
                 $targetMonth,
+                $firstVoucherStructureIds,
                 $dueDate,
                 $result['concession']
             );

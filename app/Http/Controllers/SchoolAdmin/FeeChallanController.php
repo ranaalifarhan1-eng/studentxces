@@ -55,8 +55,11 @@ class FeeChallanController extends Controller
             abort(403);
         }
 
-        $feeChallan->load(['items', 'student.schoolClass', 'student.section', 'payments']);
+        $feeChallan->load(['items', 'student.schoolClass', 'student.section', 'payments', 'adjustments.creator']);
         $school = School::find($sid);
+
+        $user = auth()->user();
+        $canAdjust = $user ? ($user->hasRole(['school-admin', 'super-admin']) || $user->can('fees.adjustment')) : false;
 
         // Bank details check (No invented bank information)
         $bankConfig = null;
@@ -71,6 +74,7 @@ class FeeChallanController extends Controller
 
         return Inertia::render('SchoolAdmin/Fees/Challan', [
             'challan'    => $feeChallan,
+            'canAdjust'  => $canAdjust,
             'school'     => [
                 'name'    => $school->name,
                 'logo'    => $school->logo_url ?? null,

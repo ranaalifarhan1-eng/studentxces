@@ -23,8 +23,37 @@ class FeePaymentController extends Controller
     public function index(Request $request)
     {
         $sid = $this->getSchoolId();
+        $activeTab = $request->input('tab', 'challans');
 
-        $payments = FeePayment::with([
+        // 1. Modern Challans Query (unpaid admission vouchers immediately appear here)
+        $challansQuery = FeeChallan::with([
+            'student:id,first_name,last_name,admission_no,class_id,section_id',
+            'student.schoolClass:id,name',
+            'student.section:id,name',
+            'items',
+            'academicYear',
+        ])
+            ->where('school_id', $sid)
+            ->when($request->class_id, fn ($q) => $q->where('class_id', $request->class_id))
+            ->when($request->search, fn ($q) => $q->where(function ($sq) use ($request) {
+                $sq->where('challan_no', 'like', "%{$request->search}%")
+                   ->orWhere('student_name', 'like', "%{$request->search}%")
+                   ->orWhere('admission_no', 'like', "%{$request->search}%");
+            }))
+            ->when($request->status, function ($q, $status) {
+                if ($status === 'overdue') {
+                    $q->whereIn('status', ['unpaid', 'partial'])->where('due_date', '<', now()->toDateString());
+                } else {
+                    $q->where('status', $status);
+                }
+            })
+            ->latest('issue_date')
+            ->latest('id');
+
+        $challans = $challansQuery->paginate(25, ['*'], 'challans_page')->withQueryString();
+
+        // 2. Payments / Receipts Query
+        $paymentsQuery = FeePayment::with([
             'student:id,first_name,last_name,admission_no,class_id',
             'student.schoolClass:id,name',
             'feeChallan:id,challan_no,billing_period_key,total_payable,paid_amount,status',
@@ -34,18 +63,26 @@ class FeePaymentController extends Controller
         ])
             ->where('school_id', $sid)
             ->when($request->student_id, fn ($q) => $q->where('student_id', $request->student_id))
-            ->when($request->status,     fn ($q) => $q->where('status', $request->status))
             ->when($request->class_id,   fn ($q) => $q->whereHas('student', fn ($sq) => $sq->where('class_id', $request->class_id)))
+            ->when($request->search, fn ($q) => $q->where(function ($sq) use ($request) {
+                $sq->where('receipt_no', 'like', "%{$request->search}%")
+                   ->orWhereHas('student', fn ($ssq) => $ssq->where('first_name', 'like', "%{$request->search}%")
+                       ->orWhere('last_name', 'like', "%{$request->search}%")
+                       ->orWhere('admission_no', 'like', "%{$request->search}%"));
+            }))
             ->when($request->month_year, fn ($q) => $q->where('month_year', $request->month_year))
-            ->latest()
-            ->paginate(25)
-            ->withQueryString();
+            ->latest('payment_date')
+            ->latest('id');
+
+        $payments = $paymentsQuery->paginate(25, ['*'], 'payments_page')->withQueryString();
 
         return Inertia::render('SchoolAdmin/Fees/Payments', [
-            'payments' => $payments,
-            'classes'  => SchoolClass::where('school_id', $sid)->orderBy('numeric_name')->get(['id', 'name']),
-            'filters'  => $request->only('student_id', 'status', 'class_id', 'month_year'),
-            'stats'    => $this->getStats($sid),
+            'activeTab' => $activeTab,
+            'challans'  => $challans,
+            'payments'  => $payments,
+            'classes'   => SchoolClass::where('school_id', $sid)->orderBy('numeric_name')->get(['id', 'name']),
+            'filters'   => $request->only('tab', 'student_id', 'status', 'class_id', 'search', 'month_year'),
+            'stats'     => $this->getStats($sid),
         ]);
     }
 
@@ -54,35 +91,64 @@ class FeePaymentController extends Controller
         $sid = $this->getSchoolId();
 
         $student = null;
+        $studentCandidates = collect();
         $activeChallans = collect();
         $discounts = collect();
         $structures = collect();
 
-        // 1. Resolve student via numeric student_id OR neutral query q / query
-        $searchParam = $request->input('student_id') ?? $request->input('query') ?? $request->input('q');
+        // 1. Resolve student via numeric student_id OR search query
+        $studentId = $request->input('student_id');
+        $searchParam = $request->input('query') ?? $request->input('q') ?? $request->input('search');
 
-        if ($searchParam) {
+        if ($studentId) {
             $student = Student::where('school_id', $sid)
+                ->with(['schoolClass:id,name', 'section:id,name', 'guardian:id,name,phone'])
+                ->find($studentId);
+        } elseif ($searchParam) {
+            $candidates = Student::where('school_id', $sid)
                 ->where(function ($q) use ($searchParam) {
                     $q->where('admission_no', $searchParam);
                     if (is_numeric($searchParam)) {
                         $q->orWhere('id', (int) $searchParam);
                     }
                     $q->orWhere('first_name', 'like', "%{$searchParam}%")
-                      ->orWhere('last_name', 'like', "%{$searchParam}%");
+                      ->orWhere('last_name', 'like', "%{$searchParam}%")
+                      ->orWhereRaw("CONCAT(first_name, ' ', last_name) LIKE ?", ["%{$searchParam}%"]);
                 })
-                ->with(['schoolClass:id,name', 'section:id,name'])
-                ->first();
+                ->with(['schoolClass:id,name', 'section:id,name', 'guardian:id,name,phone'])
+                ->limit(10)
+                ->get();
+
+            if ($candidates->count() === 1) {
+                $student = $candidates->first();
+            } elseif ($candidates->count() > 1) {
+                $studentCandidates = $candidates;
+            }
         }
 
         if ($student) {
-            // Load student's active unpaid/partial challans
+            // Load student's active unpaid/partial challans (plus selected challan if settled)
+            $selectedChallanId = $request->input('challan_id');
             $activeChallans = FeeChallan::where('school_id', $sid)
                 ->where('student_id', $student->id)
-                ->whereIn('status', ['unpaid', 'partial'])
-                ->with('items')
-                ->latest()
+                ->where(function ($q) use ($selectedChallanId) {
+                    $q->whereIn('status', ['unpaid', 'partial']);
+                    if ($selectedChallanId) {
+                        $q->orWhere('id', $selectedChallanId);
+                    }
+                })
+                ->with(['items', 'academicYear', 'adjustments.creator'])
+                ->latest('due_date')
                 ->get();
+
+            $activeChallans->transform(function ($c) {
+                $heads = $c->items->pluck('fee_head_name')->filter()->unique()->implode(', ') ?: 'Tuition Fee';
+                $payableCents = Money::toCents($c->total_payable);
+                $paidCents    = Money::toCents($c->paid_amount);
+                $bal = Money::toDecimal(max(0, $payableCents - $paidCents));
+                $c->display_label = "{$c->challan_no} — {$c->billing_period_label} — {$heads} — Balance PKR {$bal}";
+                return $c;
+            });
 
             // Load student's active discounts
             $discounts = StudentFeeDiscount::where('school_id', $sid)
@@ -99,15 +165,23 @@ class FeePaymentController extends Controller
                 ->get();
         }
 
+        $user = auth()->user();
+        $canAdjust = $user ? (
+            $user->hasRole(['school-admin', 'super-admin'])
+            || $user->can('fees.adjustment')
+        ) : false;
+
         return Inertia::render('SchoolAdmin/Fees/Collect', [
             'student'            => $student,
+            'studentCandidates'  => $studentCandidates,
             'activeChallans'     => $activeChallans,
             'selectedChallanId'  => $request->input('challan_id'),
             'discounts'          => $discounts,
             'structures'         => $structures,
             'classes'            => SchoolClass::where('school_id', $sid)->orderBy('numeric_name')->get(['id', 'name']),
-            'searchQuery'        => $searchParam ?? '',
+            'searchQuery'        => $searchParam ?? ($student ? $student->admission_no : ''),
             'idempotencyKey'     => (string) \Illuminate\Support\Str::uuid(),
+            'canAdjust'          => $canAdjust,
         ]);
     }
 
@@ -261,17 +335,48 @@ class FeePaymentController extends Controller
 
     public function show(FeePayment $feePayment)
     {
+        $sid = $this->getSchoolId();
+        if ($feePayment->school_id !== $sid) {
+            abort(403);
+        }
+
         $feePayment->load([
             'student:id,first_name,last_name,admission_no,class_id,section_id',
             'student.schoolClass:id,name',
             'student.section:id,name',
             'feeChallan.items',
+            'feeChallan.adjustments.creator',
+            'feeChallan.academicYear',
             'feeStructure.feeCategory:id,name,type',
             'collector:id,name',
         ]);
 
+        $previousPaid = '0.00';
+        $remainingBalance = '0.00';
+
+        if ($feePayment->feeChallan) {
+            $totalChallanPaidCents = Money::toCents($feePayment->feeChallan->paid_amount);
+            $thisPaidCents = Money::toCents($feePayment->amount_paid);
+            $prevPaidCents = max(0, $totalChallanPaidCents - $thisPaidCents);
+            $previousPaid = Money::toDecimal($prevPaidCents);
+
+            $payableCents = Money::toCents($feePayment->feeChallan->total_payable);
+            $remainingBalance = Money::toDecimal(max(0, $payableCents - $totalChallanPaidCents));
+        }
+
+        $paymentData = array_merge($feePayment->toArray(), [
+            'previous_paid'     => $previousPaid,
+            'remaining_balance' => $feePayment->balance_snapshot !== null ? $feePayment->balance_snapshot : $remainingBalance,
+            'billing_period'    => $feePayment->feeChallan?->billing_period_label ?: ($feePayment->month_year ? \Carbon\Carbon::parse($feePayment->month_year)->format('F Y') : 'General'),
+            'academic_year'             => $feePayment->feeChallan?->academic_year_name ?: ($feePayment->feeStructure?->academic_year ?: '2026-2027'),
+            'due_date'                  => $feePayment->feeChallan?->due_date ? $feePayment->feeChallan->due_date->format('Y-m-d') : null,
+            'adjustments'               => $feePayment->feeChallan?->adjustments ?? [],
+            'settlement_classification' => $feePayment->feeChallan?->settlement_classification,
+            'display_status'            => $feePayment->feeChallan?->display_status,
+        ]);
+
         return Inertia::render('SchoolAdmin/Fees/Receipt', [
-            'payment' => $feePayment,
+            'payment' => $paymentData,
         ]);
     }
 
@@ -285,6 +390,7 @@ class FeePaymentController extends Controller
             'student.schoolClass:id,name',
             'student.section:id,name',
             'items',
+            'academicYear',
         ])
             ->where('school_id', $sid)
             ->whereIn('status', ['unpaid', 'partial'])
@@ -305,94 +411,74 @@ class FeePaymentController extends Controller
             ->when($request->class_id, fn ($q) => $q->whereHas('student', fn ($sq) => $sq->where('class_id', $request->class_id)))
             ->get();
 
-        // Group modern challans by student
-        $studentRows = [];
+        $today = now()->toDateString();
+        $formattedList = [];
+        $totalOutstandingCents = 0;
+        $totalStudentsSet = [];
 
         foreach ($activeChallans as $ch) {
-            $stId = $ch->student_id;
-            if (! isset($studentRows[$stId])) {
-                $studentRows[$stId] = [
-                    'student'           => $ch->student,
-                    'item_count'        => 0,
-                    'gross_amount'      => 0,
-                    'discount_amount'   => 0,
-                    'total_due'         => 0,
-                    'total_paid'        => 0,
-                    'balance'           => 0,
-                    'latest_challan_id' => $ch->id,
-                    'challan_no'        => $ch->challan_no,
-                ];
-            }
+            $payableCents = Money::toCents($ch->total_payable);
+            $paidCents    = Money::toCents($ch->paid_amount);
+            $balanceCents = max(0, $payableCents - $paidCents);
+            $totalOutstandingCents += $balanceCents;
+            $totalStudentsSet[$ch->student_id] = true;
 
-            $grossCents    = Money::toCents($ch->gross_amount);
-            $discountCents = Money::toCents($ch->discount_amount);
-            $payableCents  = Money::toCents($ch->total_payable);
-            $paidCents     = Money::toCents($ch->paid_amount);
-            $balanceCents  = max(0, $payableCents - $paidCents);
+            $isOverdue = $ch->due_date && $ch->due_date->format('Y-m-d') < $today;
 
-            $studentRows[$stId]['item_count'] += $ch->items->count();
-            $studentRows[$stId]['gross_amount'] += $grossCents;
-            $studentRows[$stId]['discount_amount'] += $discountCents;
-            $studentRows[$stId]['total_due'] += $payableCents;
-            $studentRows[$stId]['total_paid'] += $paidCents;
-            $studentRows[$stId]['balance'] += $balanceCents;
-        }
-
-        // Add legacy payments
-        foreach ($legacyPayments as $lp) {
-            $stId = $lp->student_id;
-            if (! isset($studentRows[$stId])) {
-                $studentRows[$stId] = [
-                    'student'           => $lp->student,
-                    'item_count'        => 0,
-                    'gross_amount'      => 0,
-                    'discount_amount'   => 0,
-                    'total_due'         => 0,
-                    'total_paid'        => 0,
-                    'balance'           => 0,
-                    'latest_challan_id' => null,
-                    'challan_no'        => null,
-                ];
-            }
-
-            $amountDueCents = Money::toCents($lp->amount_due);
-            $fineCents      = Money::toCents($lp->fine);
-            $discountCents  = Money::toCents($lp->discount);
-            $paidCents      = Money::toCents($lp->amount_paid);
-            $dueCents       = max(0, $amountDueCents + $fineCents - $discountCents);
-            $balCents       = max(0, $dueCents - $paidCents);
-
-            $studentRows[$stId]['item_count'] += 1;
-            $studentRows[$stId]['gross_amount'] += $amountDueCents;
-            $studentRows[$stId]['discount_amount'] += $discountCents;
-            $studentRows[$stId]['total_due'] += $dueCents;
-            $studentRows[$stId]['total_paid'] += $paidCents;
-            $studentRows[$stId]['balance'] += $balCents;
-        }
-
-        // Format to standard decimals
-        $totalOutstandingCents = 0;
-        $formattedList = array_values(array_map(function ($row) use (&$totalOutstandingCents) {
-            $totalOutstandingCents += $row['balance'];
-            return [
-                'student'           => $row['student'],
-                'payment_count'     => $row['item_count'],
-                'gross_amount'      => Money::toDecimal($row['gross_amount']),
-                'discount_amount'   => Money::toDecimal($row['discount_amount']),
-                'total_due'         => Money::toDecimal($row['total_due']),
-                'total_paid'        => Money::toDecimal($row['total_paid']),
-                'balance'           => Money::toDecimal($row['balance']),
-                'latest_challan_id' => $row['latest_challan_id'],
-                'challan_no'        => $row['challan_no'],
+            $formattedList[] = [
+                'id'                   => $ch->id,
+                'type'                 => 'challan',
+                'challan_no'           => $ch->challan_no,
+                'billing_period_label' => $ch->billing_period_label,
+                'academic_year_name'   => $ch->academic_year_name ?: $ch->academicYear?->name,
+                'due_date'             => $ch->due_date ? $ch->due_date->format('Y-m-d') : null,
+                'is_overdue'                => $isOverdue,
+                'status'                    => $isOverdue ? 'overdue' : $ch->status,
+                'display_status'            => $ch->display_status,
+                'settlement_classification' => $ch->settlement_classification,
+                'student'                   => $ch->student,
+                'gross_amount'         => $ch->gross_amount,
+                'discount_amount'      => $ch->discount_amount,
+                'adjustment_amount'    => $ch->adjustment_amount,
+                'total_due'            => $ch->total_payable,
+                'total_paid'           => $ch->paid_amount,
+                'balance'              => Money::toDecimal($balanceCents),
+                'heads_breakdown'      => $ch->items->pluck('fee_head_name')->filter()->unique()->implode(', ') ?: 'Tuition Fee',
             ];
-        }, $studentRows));
+        }
+
+        foreach ($legacyPayments as $lp) {
+            $dueCents  = Money::toCents($lp->amount_due) + Money::toCents($lp->fine) - Money::toCents($lp->discount);
+            $paidCents = Money::toCents($lp->amount_paid);
+            $balanceCents = max(0, $dueCents - $paidCents);
+            $totalOutstandingCents += $balanceCents;
+            $totalStudentsSet[$lp->student_id] = true;
+
+            $formattedList[] = [
+                'id'                   => $lp->id,
+                'type'                 => 'legacy',
+                'challan_no'           => null,
+                'billing_period_label' => $lp->month_year ?: 'General',
+                'academic_year_name'   => $lp->feeStructure?->academic_year,
+                'due_date'             => $lp->payment_date,
+                'is_overdue'           => $lp->status === 'overdue',
+                'status'               => $lp->status,
+                'student'              => $lp->student,
+                'gross_amount'         => $lp->amount_due,
+                'discount_amount'      => $lp->discount,
+                'total_due'            => Money::toDecimal($dueCents),
+                'total_paid'           => $lp->amount_paid,
+                'balance'              => Money::toDecimal($balanceCents),
+                'heads_breakdown'      => $lp->feeStructure?->feeCategory?->name ?: 'Direct Fee',
+            ];
+        }
 
         return Inertia::render('SchoolAdmin/Fees/Outstanding', [
             'outstanding' => $formattedList,
             'classes'     => SchoolClass::where('school_id', $sid)->orderBy('numeric_name')->get(['id', 'name']),
             'filters'     => $request->only('class_id'),
             'summary'     => [
-                'total_students'    => count($formattedList),
+                'total_students'    => count($totalStudentsSet),
                 'total_outstanding' => Money::toDecimal($totalOutstandingCents),
             ],
         ]);
@@ -421,6 +507,9 @@ class FeePaymentController extends Controller
 
         $totalOutstandingCents = max(0, $modernOutstandingCents + $legacyOutstandingCents);
 
+        $totalAdjustments = FeeChallan::where('school_id', $sid)->sum('adjustment_amount');
+        $totalAdjustmentsCents = Money::toCents($totalAdjustments);
+
         $paidCount = FeePayment::where('school_id', $sid)->where('status', 'paid')->count();
         $pendingCount = FeeChallan::where('school_id', $sid)->whereIn('status', ['unpaid', 'partial'])->count()
             + FeePayment::where('school_id', $sid)->whereNull('fee_challan_id')->whereIn('status', ['pending', 'overdue'])->count();
@@ -428,6 +517,7 @@ class FeePaymentController extends Controller
         return [
             'total_collected'   => Money::toDecimal($totalCollectedCents),
             'total_outstanding' => Money::toDecimal($totalOutstandingCents),
+            'total_adjustments' => Money::toDecimal($totalAdjustmentsCents),
             'paid_count'        => $paidCount,
             'pending_count'     => $pendingCount,
         ];

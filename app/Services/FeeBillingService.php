@@ -386,15 +386,107 @@ class FeeBillingService
         ?StudentFeeDiscount $discount = null,
         bool $asDraft = false
     ): ?FeeChallan {
-        $sid = $student->school_id;
-        $dueDate = $dueDate ?? $targetMonth->copy()->endOfMonth();
-
         // 1. Authoritatively resolve eligible fee structures
         $structures = self::resolveBillableStructures($student, $academicYear, $targetMonth);
 
         if ($structures->isEmpty()) {
             return null;
         }
+
+        return self::createChallanFromStructures(
+            $structures,
+            $student,
+            $academicYear,
+            $targetMonth,
+            $dueDate,
+            $discount,
+            $asDraft
+        );
+    }
+
+    /**
+     * Authoritatively generate the first admission FeeChallan with explicit voucher structure filtering.
+     * Enforces:
+     * - Only active assigned structures for this student & academic year can be included
+     * - Structures with admission_voucher_policy = 'required' cannot be omitted
+     * - Structures with admission_voucher_policy = 'excluded' cannot be included
+     * - Structures with admission_voucher_policy = 'optional' are included based on operator selection
+     */
+    public static function createAdmissionChallan(
+        Student $student,
+        AcademicYear $academicYear,
+        Carbon $targetMonth,
+        ?array $selectedVoucherStructureIds = null,
+        ?Carbon $dueDate = null,
+        ?StudentFeeDiscount $discount = null,
+        bool $asDraft = false
+    ): ?FeeChallan {
+        $assignedStructures = self::resolveBillableStructures($student, $academicYear, $targetMonth);
+        if ($assignedStructures->isEmpty()) {
+            return null;
+        }
+
+        $assignedById = $assignedStructures->keyBy('id');
+
+        if ($selectedVoucherStructureIds !== null) {
+            // Validate: no unassigned, cross-tenant or excluded structures
+            foreach ($selectedVoucherStructureIds as $id) {
+                if (! $assignedById->has($id)) {
+                    throw new \InvalidArgumentException("Fee structure #{$id} is not assigned or not eligible for this student.");
+                }
+
+                $st = $assignedById->get($id);
+                if ($st->admission_voucher_policy === 'excluded') {
+                    $name = $st->feeCategory?->name ?? "Head #{$st->id}";
+                    throw new \InvalidArgumentException("Fee structure '{$name}' is excluded from admission vouchers.");
+                }
+            }
+
+            // Validate: required admission-voucher structures cannot be omitted
+            foreach ($assignedStructures as $st) {
+                if ($st->admission_voucher_policy === 'required') {
+                    if (! in_array($st->id, $selectedVoucherStructureIds)) {
+                        $name = $st->feeCategory?->name ?? "Head #{$st->id}";
+                        throw new \InvalidArgumentException("Fee structure '{$name}' is required on the admission voucher and cannot be omitted.");
+                    }
+                }
+            }
+
+            $voucherStructures = $assignedStructures->filter(fn ($st) => in_array($st->id, $selectedVoucherStructureIds));
+        } else {
+            // Default: include all non-excluded structures
+            $voucherStructures = $assignedStructures->filter(fn ($st) => $st->admission_voucher_policy !== 'excluded');
+        }
+
+        if ($voucherStructures->isEmpty()) {
+            return null;
+        }
+
+        return self::createChallanFromStructures(
+            $voucherStructures,
+            $student,
+            $academicYear,
+            $targetMonth,
+            $dueDate,
+            $discount,
+            $asDraft
+        );
+    }
+
+    /**
+     * Create FeeChallan and line items atomically from a resolved collection of structures.
+     */
+    public static function createChallanFromStructures(
+        Collection $structures,
+        Student $student,
+        AcademicYear $academicYear,
+        Carbon $targetMonth,
+        ?Carbon $dueDate = null,
+        ?StudentFeeDiscount $discount = null,
+        bool $asDraft = false
+    ): ?FeeChallan {
+        $sid = $student->school_id;
+        $dueDate = $dueDate ?? $targetMonth->copy()->endOfMonth();
 
         // If no explicit discount passed, check student's active discounts
         if (! $discount) {

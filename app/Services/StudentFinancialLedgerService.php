@@ -45,11 +45,12 @@ class StudentFinancialLedgerService
             $challanQuery->where('academic_year_id', $academicYear->id);
         }
 
-        $challans = $challanQuery->get(['id', 'total_payable', 'paid_amount', 'status', 'due_date']);
+        $challans = $challanQuery->get(['id', 'total_payable', 'paid_amount', 'adjustment_amount', 'status', 'due_date']);
 
         $modernBilledCents = 0;
         $modernOutstandingCents = 0;
         $modernOverdueCents = 0;
+        $totalAdjustmentsCents = 0;
 
         foreach ($challans as $ch) {
             $payableCents = Money::toCents($ch->total_payable);
@@ -57,6 +58,7 @@ class StudentFinancialLedgerService
             $openCents    = max(0, $payableCents - $paidCents);
 
             $modernBilledCents += $payableCents;
+            $totalAdjustmentsCents += Money::toCents($ch->adjustment_amount ?? '0.00');
 
             if (in_array($ch->status, ['unpaid', 'partial']) && $openCents > 0) {
                 $modernOutstandingCents += $openCents;
@@ -137,6 +139,8 @@ class StudentFinancialLedgerService
             'total_billed'             => Money::toDecimal($totalBilledCents),
             'total_paid_cents'         => $totalPaidCents,
             'total_paid'               => Money::toDecimal($totalPaidCents),
+            'total_adjustments_cents'  => $totalAdjustmentsCents,
+            'total_adjustments'        => Money::toDecimal($totalAdjustmentsCents),
             'outstanding_cents'        => $totalOutstandingCents,
             'outstanding_balance'      => Money::toDecimal($totalOutstandingCents),
             'overdue_cents'            => $totalOverdueCents,
@@ -156,7 +160,7 @@ class StudentFinancialLedgerService
 
         $query = FeeChallan::where('school_id', $student->school_id)
             ->where('student_id', $student->id)
-            ->with(['items.feeStructure.feeCategory', 'payments'])
+            ->with(['items.feeStructure.feeCategory', 'payments', 'academicYear', 'adjustments.creator'])
             ->latest('issue_date');
 
         if (! empty($filters['academic_year_id'])) {
@@ -177,12 +181,11 @@ class StudentFinancialLedgerService
                 && $ch->due_date
                 && Carbon::parse($ch->due_date)->lt($today);
 
-            $displayStatus = ($ch->status === 'unpaid' && $isOverdue) ? 'overdue' : $ch->status;
-
-            $ch->derived_balance_cents = $balanceCents;
-            $ch->derived_balance       = Money::toDecimal($balanceCents);
-            $ch->is_overdue            = $isOverdue;
-            $ch->display_status        = $displayStatus;
+            $ch->derived_balance_cents       = $balanceCents;
+            $ch->derived_balance             = Money::toDecimal($balanceCents);
+            $ch->is_overdue                  = $isOverdue;
+            $ch->display_status              = $ch->display_status;
+            $ch->settlement_classification   = $ch->settlement_classification;
 
             return $ch;
         });

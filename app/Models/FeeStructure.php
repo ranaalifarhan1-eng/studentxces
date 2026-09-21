@@ -15,6 +15,7 @@ class FeeStructure extends Model
     protected $fillable = [
         'school_id', 'class_id', 'fee_category_id', 'academic_year',
         'amount', 'due_date', 'frequency', 'description', 'is_active', 'is_optional',
+        'admission_voucher_policy',
     ];
 
     protected $casts = [

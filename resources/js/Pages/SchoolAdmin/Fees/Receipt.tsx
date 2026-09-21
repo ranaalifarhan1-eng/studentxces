@@ -1,4 +1,4 @@
-﻿import { Link } from '@inertiajs/react';
+import { Link } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -13,6 +13,19 @@ interface ChallanItem {
     net_amount: string;
 }
 
+interface FeeChallanAdjustment {
+    id: number;
+    adjustment_type: 'fixed' | 'percentage';
+    value: string;
+    adjustment_amount: string;
+    previous_balance: string;
+    new_balance: string;
+    reason: string;
+    notes?: string | null;
+    created_at: string;
+    creator?: { id: number; name: string };
+}
+
 interface FeeChallan {
     id: number;
     challan_no: string;
@@ -21,10 +34,12 @@ interface FeeChallan {
     discount_amount: string;
     discount_title: string | null;
     fine_amount: string;
+    adjustment_amount?: string;
     total_payable: string;
     paid_amount: string;
     status: string;
     items?: ChallanItem[];
+    adjustments?: FeeChallanAdjustment[];
 }
 
 interface FeePayment {
@@ -44,6 +59,12 @@ interface FeePayment {
     created_at: string;
     fee_challan_id: number | null;
     fee_challan?: FeeChallan | null;
+    adjustments?: FeeChallanAdjustment[];
+    previous_paid?: string;
+    remaining_balance?: string;
+    billing_period?: string;
+    academic_year?: string;
+    due_date?: string | null;
     student?: {
         id: number;
         first_name: string;
@@ -85,10 +106,14 @@ const METHOD_LABELS: Record<string, string> = {
 export default function FeeReceipt({ payment }: { payment: FeePayment }) {
     const { format: formatMoney } = useCurrency();
 
-    // Remaining balance is determined from authoritative balance_snapshot or fallback calculation
-    const balance = payment.balance_snapshot !== null
-        ? Number(payment.balance_snapshot)
-        : Math.max(0, Number(payment.amount_due) + Number(payment.fine) - Number(payment.discount) - Number(payment.amount_paid));
+    // Remaining balance is determined from authoritative remaining_balance / balance_snapshot or fallback calculation
+    const balance = payment.remaining_balance !== undefined
+        ? Number(payment.remaining_balance)
+        : (payment.balance_snapshot !== null
+            ? Number(payment.balance_snapshot)
+            : Math.max(0, Number(payment.amount_due) + Number(payment.fine) - Number(payment.discount) - Number(payment.amount_paid)));
+
+    const prevPaid = Number(payment.previous_paid || 0);
 
     return (
         <AppLayout title={`Receipt #${payment.receipt_no}`}>
@@ -131,7 +156,7 @@ export default function FeeReceipt({ payment }: { payment: FeePayment }) {
                         </Badge>
                     </div>
 
-                    {/* Student Info */}
+                    {/* Student & Billing Info */}
                     <div className="grid grid-cols-2 gap-4 pb-4 border-b border-slate-100 dark:border-slate-800 text-xs bg-slate-50 dark:bg-slate-900/50 p-4 rounded-lg">
                         <div>
                             <p className="text-slate-400 uppercase tracking-wider text-[10px]">Student</p>
@@ -139,14 +164,27 @@ export default function FeeReceipt({ payment }: { payment: FeePayment }) {
                                 {payment.student?.first_name} {payment.student?.last_name}
                             </p>
                             <p className="font-mono text-slate-500 mt-0.5">Admission: {payment.student?.admission_no}</p>
+                            <p className="text-slate-600 dark:text-slate-400 mt-0.5">
+                                Class: {payment.student?.school_class?.name ?? '—'} {payment.student?.section ? `(${payment.student.section.name})` : ''}
+                            </p>
                         </div>
                         <div>
-                            <p className="text-slate-400 uppercase tracking-wider text-[10px]">Class & Section</p>
-                            <p className="font-semibold text-slate-800 dark:text-slate-200 mt-0.5">
-                                {payment.student?.school_class?.name ?? '—'} {payment.student?.section ? `(${payment.student.section.name})` : ''}
+                            <p className="text-slate-400 uppercase tracking-wider text-[10px]">Billing Details</p>
+                            {payment.academic_year && (
+                                <p className="text-slate-700 dark:text-slate-300 font-medium mt-0.5">
+                                    Academic Year: <span className="font-semibold">{payment.academic_year}</span>
+                                </p>
+                            )}
+                            <p className="text-slate-700 dark:text-slate-300 font-medium mt-0.5">
+                                Period: <span className="font-semibold">{payment.billing_period || payment.month_year || '—'}</span>
                             </p>
+                            {payment.due_date && (
+                                <p className="text-slate-500 mt-0.5">
+                                    Due Date: {new Date(payment.due_date).toLocaleDateString()}
+                                </p>
+                            )}
                             {payment.fee_challan && (
-                                <p className="text-indigo-600 font-mono mt-0.5">Challan: #{payment.fee_challan.challan_no}</p>
+                                <p className="text-indigo-600 font-mono mt-0.5 font-semibold">Challan: #{payment.fee_challan.challan_no}</p>
                             )}
                         </div>
                     </div>
@@ -194,29 +232,56 @@ export default function FeeReceipt({ payment }: { payment: FeePayment }) {
                     {/* Financial Summary */}
                     <div className="space-y-2 pb-4 border-b border-slate-100 dark:border-slate-800 text-xs">
                         <div className="flex justify-between text-slate-600">
-                            <span>Amount Billed / Due</span>
-                            <span className="font-medium">{formatMoney(Number(payment.amount_due))}</span>
+                            <span>Gross Fees</span>
+                            <span className="font-medium">
+                                {payment.fee_challan ? formatMoney(Number(payment.fee_challan.gross_amount)) : formatMoney(Number(payment.amount_due))}
+                            </span>
                         </div>
-                        {Number(payment.discount) > 0 && (
+                        {(Number(payment.fee_challan?.discount_amount ?? payment.discount) > 0) && (
                             <div className="flex justify-between text-emerald-600">
-                                <span>Total Concession Applied</span>
-                                <span>-{formatMoney(Number(payment.discount))}</span>
+                                <span>Concession (Student Level)</span>
+                                <span>-{formatMoney(Number(payment.fee_challan?.discount_amount ?? payment.discount))}</span>
                             </div>
                         )}
+                        {payment.adjustments && payment.adjustments.length > 0 ? (
+                            payment.adjustments.map((adj) => (
+                                <div key={adj.id} className="flex justify-between text-indigo-600">
+                                    <span>One-Time Adjustment: <span className="italic font-medium">{adj.reason}</span></span>
+                                    <span>-{formatMoney(Number(adj.adjustment_amount))}</span>
+                                </div>
+                            ))
+                        ) : (Number(payment.fee_challan?.adjustment_amount || 0) > 0 ? (
+                            <div className="flex justify-between text-indigo-600">
+                                <span>One-Time Adjustment</span>
+                                <span>-{formatMoney(Number(payment.fee_challan?.adjustment_amount))}</span>
+                            </div>
+                        ) : null)}
                         {Number(payment.fine) > 0 && (
                             <div className="flex justify-between text-red-600">
                                 <span>Late Fine / Surcharge</span>
                                 <span>+{formatMoney(Number(payment.fine))}</span>
                             </div>
                         )}
+                        {payment.fee_challan && (
+                            <div className="flex justify-between font-semibold border-t border-slate-200 dark:border-slate-800 pt-1 text-slate-900 dark:text-white">
+                                <span>Net Payable</span>
+                                <span>{formatMoney(Number(payment.fee_challan.total_payable))}</span>
+                            </div>
+                        )}
+                        {prevPaid > 0 && (
+                            <div className="flex justify-between text-slate-600">
+                                <span>Previously Paid On Challan</span>
+                                <span className="font-medium text-emerald-600">{formatMoney(prevPaid)}</span>
+                            </div>
+                        )}
                         <div className="flex justify-between font-bold text-sm border-t border-slate-200 dark:border-slate-800 pt-2 text-emerald-700 dark:text-emerald-400">
-                            <span>Amount Received (This Receipt)</span>
+                            <span>Amount Paid (This Receipt)</span>
                             <span>{formatMoney(Number(payment.amount_paid))}</span>
                         </div>
                         <div className="flex justify-between font-semibold text-xs pt-1 text-slate-700 dark:text-slate-300">
-                            <span>Remaining Balance on Challan</span>
-                            <span className={balance > 0 ? 'text-red-600' : 'text-green-600'}>
-                                {balance > 0 ? formatMoney(balance) : 'Fully Cleared ($0.00)'}
+                            <span>Balance Remaining</span>
+                            <span className={balance > 0 ? 'text-red-600' : 'text-emerald-600'}>
+                                {balance > 0 ? formatMoney(balance) : 'Fully Cleared'}
                             </span>
                         </div>
                     </div>

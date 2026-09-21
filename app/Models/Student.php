@@ -38,6 +38,11 @@ class Student extends Model
         return $this->photo ? Storage::url($this->photo) : null;
     }
 
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
+    }
+
     public function schoolClass(): BelongsTo
     {
         return $this->belongsTo(SchoolClass::class, 'class_id');

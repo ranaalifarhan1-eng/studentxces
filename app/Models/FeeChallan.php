@@ -3,6 +3,7 @@
 namespace App\Models;
 
 use App\Traits\BelongsToSchool;
+use Carbon\Carbon;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
@@ -58,7 +59,17 @@ class FeeChallan extends Model
         'previous_outstanding_snapshot' => 'decimal:2',
     ];
 
-    protected $appends = ['balance', 'billing_period_label', 'display_status', 'settlement_classification'];
+    protected $appends = ['balance', 'billing_period_label', 'display_status', 'settlement_classification', 'settlement_date', 'guardian_name', 'guardian_cnic'];
+
+    public function getGuardianNameAttribute(): ?string
+    {
+        return $this->student?->guardian?->name;
+    }
+
+    public function getGuardianCnicAttribute(): ?string
+    {
+        return $this->student?->guardian?->cnic ?? null;
+    }
 
     public function getBillingPeriodLabelAttribute(): string
     {
@@ -203,6 +214,63 @@ class FeeChallan extends Model
         }
 
         return $isOverdue ? 'Overdue' : 'Unpaid';
+    }
+
+    public function getSettlementDateAttribute(): ?string
+    {
+        $payableCents = \App\Support\Money::toCents($this->total_payable);
+        $paidCents    = \App\Support\Money::toCents($this->paid_amount);
+        $balanceCents = max(0, $payableCents - $paidCents);
+
+        // Only compute settlement date if the challan is settled (status == 'paid' or balance == 0)
+        if ($balanceCents > 0 && $this->status !== 'paid') {
+            return null;
+        }
+
+        $latestPaymentDate = null;
+        $payments = $this->relationLoaded('payments') ? $this->payments : $this->payments()->get();
+        if ($payments->isNotEmpty()) {
+            $latestPayment = $payments
+                ->filter(fn ($p) => ! empty($p->payment_date))
+                ->sortByDesc(fn ($p) => Carbon::parse($p->payment_date)->timestamp)
+                ->first();
+            if ($latestPayment && $latestPayment->payment_date) {
+                $latestPaymentDate = Carbon::parse($latestPayment->payment_date)->startOfDay();
+            }
+        }
+
+        $latestAdjustmentDate = null;
+        $adjustments = $this->relationLoaded('adjustments') ? $this->adjustments : $this->adjustments()->get();
+        if ($adjustments->isNotEmpty()) {
+            $latestAdjustment = $adjustments
+                ->filter(fn ($a) => ! empty($a->created_at))
+                ->sortByDesc(fn ($a) => Carbon::parse($a->created_at)->timestamp)
+                ->first();
+            if ($latestAdjustment && $latestAdjustment->created_at) {
+                $latestAdjustmentDate = Carbon::parse($latestAdjustment->created_at)->startOfDay();
+            }
+        }
+
+        if ($latestPaymentDate && $latestAdjustmentDate) {
+            return $latestAdjustmentDate->gt($latestPaymentDate)
+                ? $latestAdjustmentDate->format('Y-m-d')
+                : $latestPaymentDate->format('Y-m-d');
+        }
+
+        if ($latestPaymentDate) {
+            return $latestPaymentDate->format('Y-m-d');
+        }
+
+        if ($latestAdjustmentDate) {
+            return $latestAdjustmentDate->format('Y-m-d');
+        }
+
+        // Fallback: if challan was marked paid without payment/adjustment records (e.g. legacy direct status update)
+        if ($this->status === 'paid' && $this->updated_at) {
+            return Carbon::parse($this->updated_at)->format('Y-m-d');
+        }
+
+        return null;
     }
 
     public function isPaid(): bool

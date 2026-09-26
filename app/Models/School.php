@@ -75,6 +75,26 @@ class School extends Model
         return $this->settings['school_code'] ?? null;
     }
 
+    public function getBankNameAttribute(): ?string
+    {
+        return $this->settings['bank_name'] ?? null;
+    }
+
+    public function getBankAccountNoAttribute(): ?string
+    {
+        return $this->settings['bank_account_no'] ?? null;
+    }
+
+    public function getBankBranchAttribute(): ?string
+    {
+        return $this->settings['bank_branch'] ?? null;
+    }
+
+    public function getBankIbanAttribute(): ?string
+    {
+        return $this->settings['bank_iban'] ?? null;
+    }
+
     public function domains(): HasMany
     {
         return $this->hasMany(SchoolDomain::class);

@@ -138,3 +138,59 @@
     @apply font-sans;
     }
 }
+
+@page {
+    size: A4 landscape;
+    margin: 5mm;
+}
+
+@media print {
+    /* Hide layout chrome, navigation, toolbars, buttons, and breadcrumbs */
+    nav, header, aside, .no-print, [role="navigation"], button {
+        display: none !important;
+    }
+
+    html, body {
+        background: #fff !important;
+        color: #000 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+    }
+
+    .flex.h-screen, .overflow-hidden, .overflow-y-auto {
+        height: auto !important;
+        overflow: visible !important;
+    }
+
+    main {
+        padding: 0 !important;
+        margin: 0 !important;
+        overflow: visible !important;
+        height: auto !important;
+        max-height: none !important;
+    }
+
+    .challan-print-page {
+        width: 100% !important;
+        max-width: 287mm !important;
+        margin: 0 auto !important;
+        padding: 0 !important;
+        page-break-after: always;
+        break-after: page;
+        page-break-inside: avoid;
+        break-inside: avoid;
+    }
+
+    .challan-print-page:last-child {
+        page-break-after: auto;
+        break-after: auto;
+    }
+
+    .challan-slip {
+        page-break-inside: avoid;
+        break-inside: avoid;
+        box-sizing: border-box;
+    }
+}

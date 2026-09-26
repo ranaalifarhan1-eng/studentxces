@@ -55,7 +55,7 @@ class FeeChallanController extends Controller
             abort(403);
         }
 
-        $feeChallan->load(['items', 'student.schoolClass', 'student.section', 'payments', 'adjustments.creator']);
+        $feeChallan->load(['items', 'student.schoolClass', 'student.section', 'student.guardian', 'payments', 'adjustments.creator']);
         $school = School::find($sid);
 
         $user = auth()->user();
@@ -153,7 +153,7 @@ class FeeChallanController extends Controller
             'month'    => 'nullable|string',
         ]);
 
-        $challans = FeeChallan::with(['items', 'student.schoolClass', 'student.section'])
+        $challans = FeeChallan::with(['items', 'student.schoolClass', 'student.section', 'student.guardian', 'adjustments', 'payments'])
             ->where('school_id', $sid)
             ->where('class_id', $data['class_id'])
             ->whereIn('status', ['unpaid', 'partial'])

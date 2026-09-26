@@ -2,6 +2,8 @@
 
 > This file is the canonical guide for all Claude Code development sessions on this project.
 > Read this file at the start of every session before writing any code.
+>
+> **Notice:** Project-wide mandatory operating, workspace, security and changelog rules are defined in `AGENTS.md` and must also be followed.
 
 ---
 

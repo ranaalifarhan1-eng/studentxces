@@ -7,6 +7,36 @@ are recorded here.
 
 ---
 
+## [2026-09-30 01:25 PKT] — Lahore Cambridge Financial Clean Reset & Challan Sequence Reset
+
+**Module:** Fees / Multi-Tenancy Data Maintenance  
+**Status:** Production (Executed on live production environment)  
+**Commit:** `651ba26` (Local docs update; operational execution)  
+
+### Removed
+- Removed test fee transaction records for Lahore Cambridge School (`school_id = 1`) in a single isolated atomic database transaction:
+  - 3 fee payments (`fee_payments`)
+  - 19 challan adjustments (`fee_challan_adjustments`)
+  - 53 challan line items (`fee_challan_items`)
+  - 53 fee challan headers (`fee_challans`)
+  - 41 student fee structure assignments (`student_fee_assignments`)
+  - 0 student fee discounts (`student_fee_discounts`)
+
+### Changed
+- Reset Lahore Cambridge School (`school_id = 1`) challan document sequence in `school_document_sequences` from `53` to `0`. Next newly generated challan will atomically increment to `1` (`CHL-2026-00001`). Other document types and school sequences were left untouched.
+
+### Data / Migration Notes
+- **Financial Balance Reconciliation:**
+  - Total Revenue ("This Month's Fees" / All-Time Revenue) reset from PKR 7,000 / PKR 11,000 to **PKR 0.00**.
+  - Outstanding Fees (Modern Challan + Legacy Pending) reset from PKR 160,999 to **PKR 0.00**.
+  - Remaining fee challans, payments, adjustments, and assignments for `school_id = 1`: **0**.
+- **Preserved Core Entities:**
+  - All 63 students, 67 guardians, 3 staff members, 1 user, 15 classes, 1 academic year, 1 fee category, 1 fee structure, and 3 school settings completely preserved.
+- **Tenant Isolation:**
+  - Multi-tenancy integrity verified; other schools' payments (3 records in `fee_payments`) and data remained completely isolated and untouched.
+- **Backup Verification:**
+  - Verified pre-execution MariaDB dump archived at `/opt/studentxces/backups/studentxces_prod_pre_financial_reset_20260929_222126.sql.gz` (`gzip -t` verified).
+
 ## [2026-09-26 20:07 PKT] — Three-Copy Fee Challan Print Release
 
 **Module:** Fees (Presentation & Printing)  

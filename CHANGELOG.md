@@ -7,6 +7,19 @@ are recorded here.
 
 ---
 
+## [2026-09-30 14:40 PKT] — Post-Reset Security Remediation & Tenant Delete Safety
+
+**Module:** Security / Database Operations  
+**Status:** Production (Executed on live production environment)  
+**Commit:** `01ab707`  
+
+### Security
+- Rotated StudentXces production database credentials (`studentxces_user`) with a strong 48-character secret across MariaDB, container environment files, and application caches.
+- Verified backup safety: confirmed established production backup script (`/opt/studentxces/scripts/backup.sh`) sources credentials safely from environment files, preventing plaintext credential exposure in command lines, history, or logs.
+- Added mandatory `Tenant Delete Safety` rule to `AGENTS.md` requiring parent-derived ID captures for child tables lacking reliable tenant keys and banning ungrouped `OR` predicates in tenant deletions.
+
+---
+
 ## [2026-09-30 01:25 PKT] — Lahore Cambridge Financial Clean Reset & Challan Sequence Reset
 
 **Module:** Fees / Multi-Tenancy Data Maintenance  

@@ -63,3 +63,4 @@ Such operations must remain strictly limited to StudentXces infrastructure (`/op
 - **Controlled Deployments:** Never push to production remotes or execute server deployments without explicit instruction, preflight verification, and a timestamped verified database backup (`gzip -t` verified).
 - **Customer Data Integrity:** Every release must guarantee existing tenant data is preserved. Pre- and post-deployment record reconciliations are required for production operations.
 - **Idempotency & Accounting:** Always enforce integer-cents precision (`App\Support\Money`), unique sequence numbering, and idempotency keys on payment transactions.
+- **Tenant Delete Safety:** For child tables lacking reliable tenant ownership columns, derive and capture IDs from the tenant-owned parent table and delete exclusively through those IDs. Never use an ungrouped `OR` condition for destructive tenant-scoped operations. Never broaden a `DELETE` predicate for convenience.

@@ -7,6 +7,48 @@ are recorded here.
 
 ---
 
+## [2026-10-03 15:15 PKT] — Lahore Cambridge Full Student & Financial Clean Reset
+
+**Module:** Multi-Tenancy Data Maintenance / Admissions / Fees  
+**Status:** Production (Executed on live production environment)  
+**Commit:** `9827cd8`  
+
+### Removed
+- Executed full student and financial clean reset for Lahore Cambridge School (`school_id = 1`) inside a single atomic database transaction following verified leaf-to-root dependency hierarchy:
+  - 80 student records (12 active, 68 soft-deleted) hard deleted from `students`
+  - 80 guardian records deleted from `guardians`
+  - 112 student attendance records deleted from `attendances` (staff attendance preserved)
+  - 2 fee payments deleted from `fee_payments`
+  - 1 fee challan header deleted from `fee_challans`
+  - 1 fee challan line item deleted from `fee_challan_items`
+  - 1 fee challan adjustment deleted from `fee_challan_adjustments`
+  - 1 student fee structure assignment deleted from `student_fee_assignments`
+  - 8 student fee discount records deleted from `student_fee_discounts`
+
+### Changed
+- Reset financial document sequences for Lahore Cambridge School (`school_id = 1`) in `school_document_sequences`:
+  - `challan`: sequence reset from `1` to `0`
+  - `fee_receipt`: sequence reset from `2` to `0`
+- Admission sequence naturally resets to `ADM-2026-0001` based on clean student table count.
+
+### Data / Migration Notes
+- **Financial Balance & Entity Reconciliation:**
+  - Active & soft-deleted students: 80 → 0
+  - Guardians: 80 → 0
+  - Student attendance: 112 → 0
+  - Revenue (current month and all-time): PKR 0.00
+  - Outstanding fees: PKR 0.00
+  - Vouchers / challans: 0
+  - Fee payments: 0
+- **Preserved Master Setup:**
+  - 100% of master setup preserved: classes (1 active, 20 total database rows), sections (0), subjects (0), academic years (1), fee categories (2 active, 5 total), fee structures (2 active, 35 total), staff (3), school admin users (1), school settings (3), departments (5), designations (4).
+- **Tenant Isolation:**
+  - Multi-tenancy integrity verified: other tenants' students (10), guardians (2), attendances (30), payments (3), and configurations remained completely untouched.
+- **Backup Verification:**
+  - Verified pre-execution MariaDB dump archived at `/opt/studentxces-backup/db/studentxces_prod_20261003_121124.sql.gz` (`gzip -t` verified).
+
+---
+
 ## [2026-09-30 14:40 PKT] — Post-Reset Security Remediation & Tenant Delete Safety
 
 **Module:** Security / Database Operations  

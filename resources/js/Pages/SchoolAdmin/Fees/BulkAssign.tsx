@@ -48,6 +48,7 @@ interface AcademicYearItem {
     id: number;
     name: string;
     is_current: boolean;
+    year_aliases?: string[];
 }
 
 interface StudentCandidate {
@@ -148,7 +149,12 @@ export default function BulkAssign({
     // 2. Academic Year
     const [selectedAyId, setSelectedAyId] = useState<string>(() => {
         if (activeStructure) {
-            const match = academicYears.find(ay => ay.name === activeStructure.academic_year);
+            const match = academicYears.find(ay => {
+                if (ay.name === activeStructure.academic_year) return true;
+                const structureAy = (activeStructure.academic_year || '').trim().toLowerCase();
+                const aliases = (ay.year_aliases && ay.year_aliases.length > 0) ? ay.year_aliases : [ay.name];
+                return aliases.some(alias => (alias || '').trim().toLowerCase() === structureAy);
+            });
             if (match) return String(match.id);
         }
         return currentYear ? String(currentYear.id) : (academicYears[0] ? String(academicYears[0].id) : '');
@@ -184,7 +190,12 @@ export default function BulkAssign({
     // Sync structure changes with academic year, billing label and due date
     useEffect(() => {
         if (activeStructure) {
-            const matchAy = academicYears.find(ay => ay.name === activeStructure.academic_year);
+            const matchAy = academicYears.find(ay => {
+                if (ay.name === activeStructure.academic_year) return true;
+                const structureAy = (activeStructure.academic_year || '').trim().toLowerCase();
+                const aliases = (ay.year_aliases && ay.year_aliases.length > 0) ? ay.year_aliases : [ay.name];
+                return aliases.some(alias => (alias || '').trim().toLowerCase() === structureAy);
+            });
             if (matchAy) {
                 setSelectedAyId(String(matchAy.id));
             }

@@ -81,8 +81,10 @@ class StudentController extends Controller
         $academicYears = AcademicYear::where('school_id', $sid)
             ->orderByDesc('start_date')
             ->get(['id', 'name', 'start_date', 'end_date', 'is_current']);
+        $academicYears->each->append('year_aliases');
 
         $currentAcademicYear = $academicYears->firstWhere('is_current', true) ?? $academicYears->first();
+        $currentAcademicYear?->append('year_aliases');
 
         $feeStructures = FeeStructure::where('school_id', $sid)
             ->where('is_active', true)
@@ -107,13 +109,39 @@ class StudentController extends Controller
     {
         $sid = $this->getSchoolId();
         $request->validate([
-            'class_id'      => ['required', SchoolExists::make('classes', 'id', $sid)],
-            'academic_year' => 'nullable|string',
+            'class_id'         => ['required', SchoolExists::make('classes', 'id', $sid)],
+            'academic_year_id' => ['nullable', SchoolExists::make('academic_years', 'id', $sid)],
+            'academic_year'    => 'nullable|string',
         ]);
+
+        $resolvedAcademicYear = null;
+        if ($request->filled('academic_year_id')) {
+            $resolvedAcademicYear = AcademicYear::where('school_id', $sid)->find($request->academic_year_id);
+        } elseif ($request->filled('academic_year')) {
+            // Find academic year in current school whose name or aliases match the requested string
+            $resolvedAcademicYear = AcademicYear::where('school_id', $sid)
+                ->where('name', $request->academic_year)
+                ->first();
+
+            if (! $resolvedAcademicYear) {
+                $candidates = AcademicYear::where('school_id', $sid)->get();
+                foreach ($candidates as $candidate) {
+                    if ($candidate->matchesYearString($request->academic_year)) {
+                        $resolvedAcademicYear = $candidate;
+                        break;
+                    }
+                }
+            }
+        }
 
         $structures = FeeStructure::where('school_id', $sid)
             ->where('class_id', $request->class_id)
-            ->when($request->academic_year, fn ($q) => $q->where('academic_year', $request->academic_year))
+            ->when($resolvedAcademicYear, function ($q) use ($resolvedAcademicYear) {
+                $q->whereIn('academic_year', $resolvedAcademicYear->getYearAliases());
+            }, function ($q) use ($request) {
+                // Backward compatibility if no AcademicYear entity could be resolved but a string was passed
+                $q->when($request->academic_year, fn ($sq) => $sq->where('academic_year', $request->academic_year));
+            })
             ->where('is_active', true)
             ->with('feeCategory:id,name,type')
             ->get(['id', 'school_id', 'class_id', 'fee_category_id', 'academic_year', 'amount', 'frequency', 'is_optional', 'admission_voucher_policy', 'due_date', 'description']);

@@ -5,6 +5,27 @@ are recorded here.
 
 ## [Unreleased]
 
+### Fixed
+- **Admissions & Fee Setup:** Resolved fee structure lookup failure during student admission where active class fee structures failed to match equivalent academic sessions (e.g. `2026-2027` fee structure vs `Academic Year 2026-27` session).
+  - Implemented canonical academic year alias resolution via `AcademicYear::getYearAliases()` and `AcademicYear::matchesYearString()`, supporting equivalent notation variants (`YYYY-YYYY`, `YYYY-YY`, `YYYY/YYYY`, `YYYY/YY`, and exact session name) derived deterministically from session dates or session name.
+  - Strictly banned ambiguous single-year aliases (`2026`, `2027`) to eliminate unintended multi-year overlaps.
+  - Exposed `year_aliases` attribute explicitly via accessor and targeted controller appending (`StudentController::create`, `FeeBulkAssignController::index`) for admission and fee bulk assign UI without global model append bloat.
+  - Updated backend query resolution in `StudentController::feeStructures()` to match aliases via `whereIn('academic_year', $aliases)`.
+  - Updated `StudentFeeAssignmentService` validation and assignment logic to accept equivalent canonical academic year strings.
+  - Updated Inertia frontend components `Create.tsx` (Student Admission Step 4) and `BulkAssign.tsx` (Fee Bulk Assign) to resolve applicable fee structures across equivalent academic session representations.
+- **Authorization & RBAC:** Resolved HTTP 403 Forbidden error encountered by platform super admins accessing permission-protected school administrative routes (including Bulk Fee Assignment `/school/fees/structures/bulk-assign`).
+  - Added global `Gate::before()` authorization hook in `AppServiceProvider::boot()` granting super admins universal ability bypass across all permission checks.
+  - Preserved standard `permission:fees.bulk_bill` route middleware without duplicate definitions.
+  - Maintained strict tenant isolation invariants: all school-scoped resource queries, route model bindings, and operations remain strictly enforced within active school context (`active_school_id`), failing closed (HTTP 403/404) on cross-tenant attempts.
+
+### Added
+- Comprehensive test coverage for academic year alias matching, admission fee lookup, and super admin authorization:
+  - `tests/Unit/AcademicYearTest.php`: Unit tests for date-based alias derivations, string matching, case/whitespace normalization, and single-year ambiguity prevention.
+  - `tests/Feature/StudentAdmissionFeeStructureLookupTest.php`: Feature tests for admission page alias exposure, fee structures API matching, backward compatibility, and end-to-end student admission with fee assignment.
+  - `tests/Feature/FeeBulkAssignAuthorizationTest.php`: Feature tests verifying super admin access via `Gate::before`, school admin permission checks, 403 enforcement for unauthorized roles, inactive school context redirection, and cross-tenant access fail-closed guards.
+  - `tests/Feature/FeeChallanPrintDesignTest.php`: Made collection adjustment settlement-date test assertion deterministic with isolated `Carbon::setTestNow` scoping.
+
+
 ---
 
 ## [2026-10-03 15:15 PKT] — Lahore Cambridge Full Student & Financial Clean Reset

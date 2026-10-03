@@ -37,7 +37,8 @@ class FeeBulkAssignController extends Controller
 
         $academicYears = AcademicYear::where('school_id', $sid)
             ->orderByDesc('start_date')
-            ->get(['id', 'name', 'is_current']);
+            ->get(['id', 'name', 'is_current', 'start_date', 'end_date']);
+        $academicYears->each->append('year_aliases');
 
         $currentYear = $academicYears->firstWhere('is_current', true) ?? $academicYears->first();
 

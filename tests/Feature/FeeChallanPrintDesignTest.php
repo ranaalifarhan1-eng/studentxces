@@ -139,6 +139,12 @@ class FeeChallanPrintDesignTest extends TestCase
         ]);
     }
 
+    protected function tearDown(): void
+    {
+        Carbon::setTestNow();
+        parent::tearDown();
+    }
+
     protected function createChallan(array $overrides = []): FeeChallan
     {
         $gross = $overrides['gross_amount'] ?? 5000.00;
@@ -257,55 +263,61 @@ class FeeChallanPrintDesignTest extends TestCase
 
     public function test_collection_adjustment_challan_loads_adjustments_and_settlement_classification(): void
     {
-        $challan = $this->createChallan([
-            'due_date'          => '2026-09-25',
-            'gross_amount'      => 2000.00,
-            'total_payable'     => 1500.00,
-            'paid_amount'       => 1500.00,
-            'adjustment_amount' => 500.00,
-            'status'            => 'paid',
-        ]);
+        Carbon::setTestNow(Carbon::parse('2026-09-26 12:00:00'));
 
-        FeeChallanAdjustment::create([
-            'school_id'         => $this->school->id,
-            'fee_challan_id'    => $challan->id,
-            'student_id'        => $this->student->id,
-            'created_by'        => $this->adminUser->id,
-            'adjustment_type'   => 'fixed',
-            'value'             => '500.00',
-            'adjustment_amount' => 500.00,
-            'previous_balance'  => 500.00,
-            'new_balance'       => 0.00,
-            'reason'            => 'Principal Discretion',
-            'notes'             => 'Approved waiver',
-            'created_at'        => '2026-09-25 10:00:00',
-        ]);
+        try {
+            $challan = $this->createChallan([
+                'due_date'          => '2026-09-25',
+                'gross_amount'      => 2000.00,
+                'total_payable'     => 1500.00,
+                'paid_amount'       => 1500.00,
+                'adjustment_amount' => 500.00,
+                'status'            => 'paid',
+            ]);
 
-        FeePayment::create([
-            'school_id'        => $this->school->id,
-            'student_id'       => $this->student->id,
-            'fee_challan_id'   => $challan->id,
-            'receipt_no'       => 'RCP-2026-' . rand(1000, 9999),
-            'amount_due'       => 1500.00,
-            'amount_paid'      => 1500.00,
-            'discount'         => 0.00,
-            'fine'             => 0.00,
-            'balance_snapshot' => 0.00,
-            'payment_date'     => '2026-09-26',
-            'status'           => 'paid',
-            'method'           => 'cash',
-        ]);
+            FeeChallanAdjustment::create([
+                'school_id'         => $this->school->id,
+                'fee_challan_id'    => $challan->id,
+                'student_id'        => $this->student->id,
+                'created_by'        => $this->adminUser->id,
+                'adjustment_type'   => 'fixed',
+                'value'             => '500.00',
+                'adjustment_amount' => 500.00,
+                'previous_balance'  => 500.00,
+                'new_balance'       => 0.00,
+                'reason'            => 'Principal Discretion',
+                'notes'             => 'Approved waiver',
+                'created_at'        => '2026-09-25 10:00:00',
+            ]);
 
-        $response = $this->actingAs($this->adminUser)
-            ->get(route('school.fees.challans.show', $challan->id));
+            FeePayment::create([
+                'school_id'        => $this->school->id,
+                'student_id'       => $this->student->id,
+                'fee_challan_id'   => $challan->id,
+                'receipt_no'       => 'RCP-2026-' . rand(1000, 9999),
+                'amount_due'       => 1500.00,
+                'amount_paid'      => 1500.00,
+                'discount'         => 0.00,
+                'fine'             => 0.00,
+                'balance_snapshot' => 0.00,
+                'payment_date'     => '2026-09-26',
+                'status'           => 'paid',
+                'method'           => 'cash',
+            ]);
 
-        $response->assertOk();
-        $response->assertInertia(fn (Assert $page) => $page
-            ->component('SchoolAdmin/Fees/Challan')
-            ->where('challan.settlement_classification', 'Paid + Adjusted')
-            ->where('challan.settlement_date', '2026-09-26')
-            ->has('challan.adjustments', 1)
-        );
+            $response = $this->actingAs($this->adminUser)
+                ->get(route('school.fees.challans.show', $challan->id));
+
+            $response->assertOk();
+            $response->assertInertia(fn (Assert $page) => $page
+                ->component('SchoolAdmin/Fees/Challan')
+                ->where('challan.settlement_classification', 'Paid + Adjusted')
+                ->where('challan.settlement_date', '2026-09-26')
+                ->has('challan.adjustments', 1)
+            );
+        } finally {
+            Carbon::setTestNow();
+        }
     }
 
     public function test_fully_paid_challan_retains_paid_status(): void

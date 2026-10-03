@@ -38,6 +38,7 @@ export interface AcademicYear {
     start_date: string;
     end_date: string;
     is_current: boolean;
+    year_aliases?: string[];
 }
 
 export interface BrandingProps {

@@ -194,8 +194,15 @@ export default function CreateStudent() {
         if (!watchedClassId) return [];
         return feeStructures.filter((s) => {
             const matchesClass = s.class_id === Number(watchedClassId);
-            const matchesAy = selectedAcademicYear ? s.academic_year === selectedAcademicYear.name : true;
-            return matchesClass && matchesAy;
+            if (!matchesClass) return false;
+            if (!selectedAcademicYear) return true;
+
+            const structureYear = (s.academic_year || '').trim().toLowerCase();
+            const aliases = (selectedAcademicYear.year_aliases && selectedAcademicYear.year_aliases.length > 0)
+                ? selectedAcademicYear.year_aliases
+                : [selectedAcademicYear.name];
+
+            return aliases.some((alias) => (alias || '').trim().toLowerCase() === structureYear);
         });
     }, [feeStructures, watchedClassId, selectedAcademicYear]);
 

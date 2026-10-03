@@ -93,7 +93,7 @@ class StudentFeeAssignmentService
         // 2. Fetch all active mandatory class structures for student's class and academic year
         $mandatoryStructures = FeeStructure::where('school_id', $sid)
             ->where('class_id', $student->class_id)
-            ->where('academic_year', $academicYear->name)
+            ->whereIn('academic_year', $academicYear->getYearAliases())
             ->where('is_active', true)
             ->where('is_optional', false)
             ->get();
@@ -120,7 +120,7 @@ class StudentFeeAssignmentService
                     );
                 }
 
-                if ($st->academic_year !== $academicYear->name) {
+                if (! $academicYear->matchesYearString($st->academic_year)) {
                     throw new InvalidArgumentException(
                         "Academic year mismatch: FeeStructure #{$st->id} specifies '{$st->academic_year}', but requested AcademicYear is '{$academicYear->name}'."
                     );
@@ -460,7 +460,7 @@ class StudentFeeAssignmentService
                 $applicableStructure = FeeStructure::where('school_id', $sid)
                     ->where('class_id', $student->class_id)
                     ->where('fee_category_id', $categoryId)
-                    ->where('academic_year', $academicYear->name)
+                    ->whereIn('academic_year', $academicYear->getYearAliases())
                     ->where('is_active', true)
                     ->first();
 

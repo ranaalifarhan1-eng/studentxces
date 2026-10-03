@@ -64,3 +64,7 @@ Such operations must remain strictly limited to StudentXces infrastructure (`/op
 - **Customer Data Integrity:** Every release must guarantee existing tenant data is preserved. Pre- and post-deployment record reconciliations are required for production operations.
 - **Idempotency & Accounting:** Always enforce integer-cents precision (`App\Support\Money`), unique sequence numbering, and idempotency keys on payment transactions.
 - **Tenant Delete Safety:** For child tables lacking reliable tenant ownership columns, derive and capture IDs from the tenant-owned parent table and delete exclusively through those IDs. Never use an ungrouped `OR` condition for destructive tenant-scoped operations. Never broaden a `DELETE` predicate for convenience.
+- **Polymorphic Delete Safety:** For polymorphic child tables, destructive queries must include both:
+  - parent/tenant-derived IDs
+  - the correct polymorphic type discriminator  
+  Never scope only by polymorphic numeric ID.

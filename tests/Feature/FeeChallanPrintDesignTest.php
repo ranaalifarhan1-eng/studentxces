@@ -78,8 +78,8 @@ class FeeChallanPrintDesignTest extends TestCase
             'school_id'   => $this->school->id,
             'package_id'  => $package->id,
             'status'      => 'active',
-            'start_date'  => Carbon::now()->subDays(10),
-            'end_date'    => Carbon::now()->addDays(30),
+            'start_date'  => Carbon::now()->subYear(),
+            'end_date'    => Carbon::now()->addYear(),
         ]);
 
         $this->adminUser = User::create([

@@ -14,7 +14,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import type { PageProps } from '@/Types';
 
 const loginSchema = z.object({
-    email: z.string().email('Please enter a valid email address'),
+    email: z.string().min(1, 'Please enter your email or username'),
     password: z.string().min(1, 'Password is required'),
     remember: z.boolean().optional(),
 });
@@ -156,17 +156,17 @@ export default function Login() {
 
                     <CardContent>
                         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4" noValidate>
-                            {/* Email */}
+                            {/* Email or Username */}
                             <div className="space-y-1.5">
                                 <Label htmlFor="email" className="text-sm font-medium text-slate-700 dark:text-slate-300">
-                                    Email address
+                                    Email address or Username
                                 </Label>
                                 <Input
                                     id="email"
-                                    type="email"
-                                    autoComplete="email"
+                                    type="text"
+                                    autoComplete="username"
                                     autoFocus
-                                    placeholder="admin@school.edu"
+                                    placeholder="e.g. user@school.edu or LCS-ADM-2026-0001"
                                     className="h-10"
                                     {...register('email')}
                                 />

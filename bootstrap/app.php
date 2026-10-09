@@ -15,6 +15,7 @@ return Application::configure(basePath: dirname(__DIR__))
 
         $middleware->web(append: [
             \App\Http\Middleware\HandleInertiaRequests::class,
+            \App\Http\Middleware\EnsurePasswordIsChanged::class,
         ]);
 
         $middleware->alias([
@@ -23,6 +24,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'role_or_permission' => \Spatie\Permission\Middleware\RoleOrPermissionMiddleware::class,
             'school.module'      => \App\Http\Middleware\EnsureSchoolModule::class,
             'school.context'     => \App\Http\Middleware\EnsureActiveSchoolContext::class,
+            'password.changed'   => \App\Http\Middleware\EnsurePasswordIsChanged::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {

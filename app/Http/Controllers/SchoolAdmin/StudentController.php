@@ -7,6 +7,7 @@ use App\Models\AcademicYear;
 use App\Models\FeeCategory;
 use App\Models\FeeStructure;
 use App\Models\Guardian;
+use App\Models\School;
 use App\Models\SchoolClass;
 use App\Models\Section;
 use App\Models\Student;
@@ -14,6 +15,7 @@ use App\Models\StudentDocument;
 use App\Models\User;
 use App\Rules\SchoolExists;
 use App\Services\FeeBillingService;
+use App\Services\PortalCredentialService;
 use App\Services\StudentFeeAssignmentService;
 use App\Services\StudentFinancialLedgerService;
 use Carbon\Carbon;
@@ -30,6 +32,43 @@ use Inertia\Response;
 
 class StudentController extends Controller
 {
+    public function guardianSearch(Request $request): JsonResponse
+    {
+        $sid = $this->getSchoolId();
+        $q = trim((string) $request->input('q', ''));
+
+        $guardians = Guardian::where('school_id', $sid)
+            ->when($q !== '', function ($query) use ($q) {
+                $query->where(function ($sub) use ($q) {
+                    $sub->where('name', 'like', "%{$q}%")
+                        ->orWhere('phone', 'like', "%{$q}%")
+                        ->orWhere('email', 'like', "%{$q}%")
+                        ->orWhere('guardian_code', 'like', "%{$q}%");
+                });
+            })
+            ->with(['students:id,guardian_id,first_name,last_name,admission_no', 'user:id,username,email,status'])
+            ->limit(20)
+            ->get()
+            ->map(function ($g) {
+                return [
+                    'id'             => $g->id,
+                    'guardian_code'  => $g->guardian_code,
+                    'name'           => $g->name,
+                    'relation'       => $g->relation,
+                    'phone'          => $g->phone,
+                    'email'          => $g->email,
+                    'occupation'     => $g->occupation,
+                    'address'        => $g->address,
+                    'has_portal'     => ! empty($g->user_id),
+                    'username'       => $g->user?->username,
+                    'students_count' => $g->students->count(),
+                    'students'       => $g->students->map(fn ($s) => "{$s->first_name} {$s->last_name} ({$s->admission_no})")->values(),
+                ];
+            });
+
+        return response()->json($guardians);
+    }
+
     public function index(Request $request): Response
     {
         $students = Student::with(['schoolClass:id,name', 'section:id,name', 'guardian:id,name,phone'])
@@ -194,8 +233,9 @@ class StudentController extends Controller
             'class_id'        => ['required', SchoolExists::make('classes', 'id', $sid)],
             'section_id'      => ['nullable', SchoolExists::make('sections', 'id', $sid)],
             // Guardian
-            'guardian.name'       => 'required|string|max:150',
-            'guardian.relation'   => 'required|string|max:50',
+            'guardian_id'         => ['nullable', SchoolExists::make('guardians', 'id', $sid)],
+            'guardian.name'       => 'required_without:guardian_id|nullable|string|max:150',
+            'guardian.relation'   => 'required_without:guardian_id|nullable|string|max:50',
             'guardian.phone'      => 'nullable|string|max:20',
             'guardian.email'      => 'nullable|email|max:150',
             'guardian.occupation' => 'nullable|string|max:100',
@@ -243,16 +283,22 @@ class StudentController extends Controller
 
         $student = null;
         $challan = null;
+        $portalAccountCreated = null;
 
-        DB::transaction(function () use ($data, $request, $sid, $user, &$student, &$challan) {
-            $guardian = Guardian::create(array_merge(
-                $data['guardian'],
-                ['school_id' => $sid],
-            ));
+        DB::transaction(function () use ($data, $request, $sid, $user, &$student, &$challan, &$portalAccountCreated) {
+            if (! empty($data['guardian_id'])) {
+                $guardian = Guardian::where('school_id', $sid)->findOrFail($data['guardian_id']);
+            } else {
+                $guardian = Guardian::create(array_merge(
+                    $data['guardian'] ?? [],
+                    ['school_id' => $sid],
+                ));
+            }
 
             $student = Student::create(array_merge(
                 collect($data)->except([
                     'guardian',
+                    'guardian_id',
                     'academic_year_id',
                     'fee_structure_ids',
                     'first_voucher_structure_ids',
@@ -268,6 +314,37 @@ class StudentController extends Controller
                     'guardian_id' => $guardian->id,
                 ],
             ));
+
+            $school = School::find($sid);
+
+            // Automatically provision guardian portal account first (if not already existing)
+            $guardianCreds = PortalCredentialService::provisionGuardianPortalAccount(
+                $guardian,
+                $school,
+                null,
+                $user
+            );
+
+            // Automatically provision student portal account
+            $studentCreds = PortalCredentialService::provisionStudentPortalAccount(
+                $student,
+                $school,
+                null,
+                $user
+            );
+
+            $portalAccountCreated = [
+                'student' => [
+                    'username'     => $studentCreds['username'],
+                    'email_queued' => $studentCreds['email_queued'],
+                ],
+                'guardian' => [
+                    'name'         => $guardian->name,
+                    'username'     => $guardianCreds['username'],
+                    'is_existing'  => $guardianCreds['is_existing'] ?? false,
+                    'email_queued' => $guardianCreds['email_queued'],
+                ],
+            ];
 
             $hasFeeAssignment = $request->boolean('initialize_fees') || ! empty($data['fee_structure_ids']);
             $hasConcession    = ! empty($data['concession']) && ! empty($data['concession']['title']);
@@ -325,7 +402,9 @@ class StudentController extends Controller
             ? 'Student admitted and first fee voucher generated successfully.'
             : 'Student admitted successfully.';
 
-        return redirect()->route('school.students.show', $student)->with('success', $message);
+        return redirect()->route('school.students.show', $student)
+            ->with('success', $message)
+            ->with('portal_account_created', $portalAccountCreated);
     }
 
     public function show(Student $student): Response
@@ -335,7 +414,11 @@ class StudentController extends Controller
             abort(403);
         }
 
-        $student->load(['schoolClass', 'section', 'guardian', 'documents', 'user']);
+        $student->load(['schoolClass', 'section', 'guardian.user', 'guardian.students', 'documents', 'user']);
+
+        $user = auth()->user();
+        $canViewCreds = $user ? ($user->hasRole('super-admin') || $user->can('students.portal_credentials.view') || $user->can('students.edit')) : false;
+        $canResetCreds = $user ? ($user->hasRole('super-admin') || $user->can('students.portal_credentials.reset') || $user->can('students.edit')) : false;
 
         $financialSummary  = StudentFinancialLedgerService::summary($student);
         $challans          = StudentFinancialLedgerService::challans($student);
@@ -344,21 +427,49 @@ class StudentController extends Controller
         $activeDiscounts   = StudentFinancialLedgerService::activeDiscounts($student);
 
         $portalUser = $student->user ? [
-            'id'            => $student->user->id,
-            'name'          => $student->user->name,
-            'email'         => $student->user->email,
-            'status'        => $student->user->status ?? 'active',
-            'last_login_at' => $student->user->last_login_at ? $student->user->last_login_at->toDateTimeString() : null,
+            'id'                   => $student->user->id,
+            'name'                 => $student->user->name,
+            'username'             => $student->user->username,
+            'email'                => $student->user->email ?: $student->email,
+            'status'               => $student->user->status ?? 'active',
+            'must_change_password' => (bool) $student->user->must_change_password,
+            'has_active_temp_pass' => $student->user->hasActiveTemporaryPassword(),
+            'temp_pass_expires_at' => $student->user->temporary_password_expires_at ? $student->user->temporary_password_expires_at->toDateTimeString() : null,
+            'last_login_at'        => $student->user->last_login_at ? $student->user->last_login_at->toDateTimeString() : null,
+        ] : null;
+
+        $guardianPortalUser = ($student->guardian && $student->guardian->user) ? [
+            'id'                    => $student->guardian->user->id,
+            'guardian_id'           => $student->guardian->id,
+            'guardian_name'         => $student->guardian->name,
+            'guardian_code'         => $student->guardian->guardian_code,
+            'name'                  => $student->guardian->user->name,
+            'username'              => $student->guardian->user->username,
+            'email'                 => $student->guardian->user->email ?: $student->guardian->email,
+            'status'                => $student->guardian->user->status ?? 'active',
+            'must_change_password'  => (bool) $student->guardian->user->must_change_password,
+            'has_active_temp_pass'  => $student->guardian->user->hasActiveTemporaryPassword(),
+            'temp_pass_expires_at'  => $student->guardian->user->temporary_password_expires_at ? $student->guardian->user->temporary_password_expires_at->toDateTimeString() : null,
+            'last_login_at'         => $student->guardian->user->last_login_at ? $student->guardian->user->last_login_at->toDateTimeString() : null,
+            'linked_children_count' => $student->guardian->students->count(),
+            'linked_children'       => $student->guardian->students->map(fn ($s) => [
+                'id'           => $s->id,
+                'name'         => $s->full_name,
+                'admission_no' => $s->admission_no,
+            ])->values(),
         ] : null;
 
         return Inertia::render('SchoolAdmin/Students/Show', [
-            'student'          => $student,
-            'portalUser'       => $portalUser,
-            'financialSummary' => $financialSummary,
-            'challans'         => $challans,
-            'payments'         => $payments,
-            'assignments'      => $activeAssignments,
-            'concessions'      => $activeDiscounts,
+            'student'             => $student,
+            'portalUser'          => $portalUser,
+            'guardianPortalUser'  => $guardianPortalUser,
+            'canViewCredentials'  => $canViewCreds,
+            'canResetCredentials' => $canResetCreds,
+            'financialSummary'    => $financialSummary,
+            'challans'            => $challans,
+            'payments'            => $payments,
+            'assignments'         => $activeAssignments,
+            'concessions'         => $activeDiscounts,
         ]);
     }
 
@@ -480,54 +591,23 @@ class StudentController extends Controller
             abort(403);
         }
 
+        $actor = auth()->user();
+        if ($actor && ! $actor->hasRole('super-admin') && ! $actor->can('students.portal_credentials.reset') && ! $actor->can('students.edit')) {
+            abort(403, 'You do not have permission to create portal accounts.');
+        }
+
         if ($student->user_id && $student->user) {
             return back()->with('error', 'Portal access account already exists for this student.');
         }
 
-        $data = $request->validate([
-            'email' => 'nullable|email|max:150',
-        ]);
-
-        $email = ! empty($data['email']) ? trim(strtolower($data['email'])) : null;
-        if (! $email) {
-            $email = ! empty($student->email) ? trim(strtolower($student->email)) : null;
-        }
-        if (! $email) {
-            $cleanAdmission = strtolower(preg_replace('/[^a-zA-Z0-9]/', '', $student->admission_no));
-            $email = "{$cleanAdmission}@student.school.local";
+        if ($request->filled('email')) {
+            $student->update(['email' => strtolower(trim($request->input('email')))]);
         }
 
-        $existing = User::where('email', $email)->first();
-        if ($existing) {
-            if ($existing->school_id === $sid) {
-                $student->update(['user_id' => $existing->id]);
-                return back()->with('info', 'Linked existing user account to student.');
-            }
-            throw ValidationException::withMessages([
-                'email' => 'A user with this email address already exists in the system.',
-            ]);
-        }
+        $school = School::find($sid);
+        $result = PortalCredentialService::provisionStudentPortalAccount($student, $school, null, $actor);
 
-        $tempPassword = Str::password(10, true, true, false);
-
-        $user = User::create([
-            'school_id' => $sid,
-            'name'      => $student->full_name,
-            'email'     => $email,
-            'password'  => Hash::make($tempPassword),
-            'status'    => 'active',
-        ]);
-
-        $user->assignRole('student');
-        $student->update(['user_id' => $user->id]);
-
-        return back()->with([
-            'success'            => "Portal access created for {$student->full_name}.",
-            'portal_credentials' => [
-                'email'         => $user->email,
-                'temp_password' => $tempPassword,
-            ],
-        ]);
+        return back()->with('success', "Student portal access account created for {$student->full_name}. Temporary credentials can be revealed from the portal card.");
     }
 
     public function togglePortalAccessStatus(Student $student): RedirectResponse
@@ -535,6 +615,11 @@ class StudentController extends Controller
         $sid = $this->getSchoolId();
         if ($student->school_id !== $sid) {
             abort(403);
+        }
+
+        $actor = auth()->user();
+        if ($actor && ! $actor->hasRole('super-admin') && ! $actor->can('students.portal_credentials.reset') && ! $actor->can('students.edit')) {
+            abort(403, 'You do not have permission to modify portal account status.');
         }
 
         if (! $student->user_id || ! $student->user) {
@@ -545,6 +630,15 @@ class StudentController extends Controller
         $newStatus = ($user->status === 'active') ? 'inactive' : 'active';
         $user->status = $newStatus;
         $user->save();
+
+        activity()
+            ->causedBy($actor)
+            ->withProperties([
+                'school_id'  => $sid,
+                'target_id'  => $user->id,
+                'new_status' => $newStatus,
+            ])
+            ->log('Portal access status changed');
 
         $actionWord = ($newStatus === 'active') ? 'activated' : 'disabled';
         return back()->with('success', "Portal access {$actionWord} successfully.");
@@ -557,21 +651,158 @@ class StudentController extends Controller
             abort(403);
         }
 
+        $actor = auth()->user();
+        if ($actor && ! $actor->hasRole('super-admin') && ! $actor->can('students.portal_credentials.reset') && ! $actor->can('students.edit')) {
+            abort(403, 'You do not have permission to reset portal credentials.');
+        }
+
         if (! $student->user_id || ! $student->user) {
             return back()->with('error', 'No portal access account found for this student.');
         }
 
-        $user = $student->user;
-        $tempPassword = Str::password(10, true, true, false);
-        $user->password = Hash::make($tempPassword);
-        $user->save();
+        $result = PortalCredentialService::resetPortalPassword($student->user, $actor, 'student');
 
-        return back()->with([
-            'success'            => "Password reset successfully for {$student->full_name}.",
-            'portal_credentials' => [
-                'email'         => $user->email,
-                'temp_password' => $tempPassword,
-            ],
+        return back()->with('success', "Temporary password generated successfully for {$student->full_name}. You can reveal credentials from the portal card.");
+    }
+
+    public function revealPortalPassword(Student $student): JsonResponse
+    {
+        $sid = $this->getSchoolId();
+        if ($student->school_id !== $sid) {
+            abort(403);
+        }
+
+        $actor = auth()->user();
+        if ($actor && ! $actor->hasRole('super-admin') && ! $actor->can('students.portal_credentials.view') && ! $actor->can('students.edit')) {
+            abort(403, 'You do not have permission to view temporary credentials.');
+        }
+
+        if (! $student->user_id || ! $student->user) {
+            return response()->json(['error' => 'No portal user account found.'], 404);
+        }
+
+        $plain = PortalCredentialService::revealTemporaryPassword($student->user, $actor);
+        if ($plain === null) {
+            return response()->json([
+                'error' => 'No active temporary password found or it has already expired or been changed by the user.',
+            ], 422);
+        }
+
+        return response()->json([
+            'username'      => $student->user->username,
+            'email'         => $student->user->email,
+            'temp_password' => $plain,
+            'expires_at'    => $student->user->temporary_password_expires_at?->toDateTimeString(),
         ]);
+    }
+
+    public function createGuardianPortalAccess(Student $student): RedirectResponse
+    {
+        $sid = $this->getSchoolId();
+        if ($student->school_id !== $sid) {
+            abort(403);
+        }
+
+        $actor = auth()->user();
+        if ($actor && ! $actor->hasRole('super-admin') && ! $actor->can('students.portal_credentials.reset') && ! $actor->can('students.edit')) {
+            abort(403, 'You do not have permission to create portal accounts.');
+        }
+
+        $guardian = $student->guardian;
+        if (! $guardian) {
+            return back()->with('error', 'Student does not have a linked guardian.');
+        }
+
+        if ($guardian->user_id && $guardian->user) {
+            return back()->with('error', 'Guardian already has a portal account.');
+        }
+
+        $school = School::find($sid);
+        $result = PortalCredentialService::provisionGuardianPortalAccount($guardian, $school, null, $actor);
+
+        return back()->with('success', "Parent portal access created for {$guardian->name}. Temporary credentials can be revealed from the portal card.");
+    }
+
+    public function revealGuardianPortalPassword(Student $student): JsonResponse
+    {
+        $sid = $this->getSchoolId();
+        if ($student->school_id !== $sid) {
+            abort(403);
+        }
+
+        $actor = auth()->user();
+        if ($actor && ! $actor->hasRole('super-admin') && ! $actor->can('students.portal_credentials.view') && ! $actor->can('students.edit')) {
+            abort(403, 'You do not have permission to view temporary credentials.');
+        }
+
+        $guardian = $student->guardian;
+        if (! $guardian || ! $guardian->user_id || ! $guardian->user) {
+            return response()->json(['error' => 'No parent portal user account found.'], 404);
+        }
+
+        $plain = PortalCredentialService::revealTemporaryPassword($guardian->user, $actor);
+        if ($plain === null) {
+            return response()->json([
+                'error' => 'No active temporary password found or it has already expired or been changed by the user.',
+            ], 422);
+        }
+
+        return response()->json([
+            'username'      => $guardian->user->username,
+            'email'         => $guardian->user->email,
+            'temp_password' => $plain,
+            'expires_at'    => $guardian->user->temporary_password_expires_at?->toDateTimeString(),
+        ]);
+    }
+
+    public function resetGuardianPortalPassword(Student $student): RedirectResponse
+    {
+        $sid = $this->getSchoolId();
+        if ($student->school_id !== $sid) {
+            abort(403);
+        }
+
+        $actor = auth()->user();
+        if ($actor && ! $actor->hasRole('super-admin') && ! $actor->can('students.portal_credentials.reset') && ! $actor->can('students.edit')) {
+            abort(403, 'You do not have permission to reset portal credentials.');
+        }
+
+        $guardian = $student->guardian;
+        if (! $guardian || ! $guardian->user_id || ! $guardian->user) {
+            return back()->with('error', 'No parent portal account found for this guardian.');
+        }
+
+        $result = PortalCredentialService::resetPortalPassword($guardian->user, $actor, 'guardian');
+
+        return back()->with('success', "Temporary password generated successfully for {$guardian->name}. You can reveal credentials from the portal card.");
+    }
+
+    public function resendPortalCredentialsEmail(Request $request, Student $student): RedirectResponse
+    {
+        $sid = $this->getSchoolId();
+        if ($student->school_id !== $sid) {
+            abort(403);
+        }
+
+        $actor = auth()->user();
+        if ($actor && ! $actor->hasRole('super-admin') && ! $actor->can('students.portal_credentials.view') && ! $actor->can('students.edit')) {
+            abort(403, 'You do not have permission to resend portal credentials.');
+        }
+
+        $targetType = $request->input('type', 'student');
+        $user = ($targetType === 'guardian')
+            ? $student->guardian?->user
+            : $student->user;
+
+        if (! $user) {
+            return back()->with('error', 'Target portal user account not found.');
+        }
+
+        $sent = PortalCredentialService::resendCredentialEmail($user, $actor, $targetType);
+        if (! $sent) {
+            return back()->with('error', 'Cannot send email: account has no email address or temporary credential has expired/been changed.');
+        }
+
+        return back()->with('success', 'Portal credentials email queued successfully.');
     }
 }

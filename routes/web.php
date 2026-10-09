@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Auth\LoginController;
+use App\Http\Controllers\Auth\FirstLoginPasswordController;
 use App\Http\Controllers\SchoolAdmin\AttendanceController;
 use App\Http\Controllers\SchoolAdmin\ExamController;
 use App\Http\Controllers\SchoolAdmin\FeeCategoryController;
@@ -79,6 +80,10 @@ Route::middleware('auth')->group(function () {
     Route::get('/password/change',           [ProfileController::class, 'changePasswordPage'])->name('password.change');
     Route::put('/profile/password',          [ProfileController::class, 'updatePassword'])->name('profile.password');
 
+    // First Login Password Change
+    Route::get('/password/first-change',     [FirstLoginPasswordController::class, 'show'])->name('password.first-change');
+    Route::post('/password/first-change',    [FirstLoginPasswordController::class, 'update'])->name('password.first-change.update');
+
     Route::get('/dashboard', function () {
         $user = auth()->user();
 
@@ -115,14 +120,20 @@ Route::middleware('auth')->group(function () {
                 Route::resource('subjects', SubjectController::class)->except(['create', 'edit', 'show']);
                 Route::resource('shifts',   ShiftController::class)->except(['create', 'edit', 'show']);
                 Route::resource('holidays', HolidayController::class)->except(['create', 'edit', 'show']);
-                Route::get('students/fee-structures',              [StudentController::class, 'feeStructures'])->name('students.fee-structures');
+                Route::get('students/fee-structures',                         [StudentController::class, 'feeStructures'])->name('students.fee-structures');
+                Route::get('students/guardians/search',                        [StudentController::class, 'guardianSearch'])->name('students.guardians.search');
                 Route::resource('students', StudentController::class);
-                Route::post('students/{student}/documents',        [StudentController::class, 'uploadDocument'])->name('students.documents.upload');
-                Route::get('students/documents/{document}/download', [StudentController::class, 'downloadDocument'])->name('students.documents.download');
-                Route::delete('students/documents/{document}',     [StudentController::class, 'deleteDocument'])->name('students.documents.delete');
+                Route::post('students/{student}/documents',                    [StudentController::class, 'uploadDocument'])->name('students.documents.upload');
+                Route::get('students/documents/{document}/download',           [StudentController::class, 'downloadDocument'])->name('students.documents.download');
+                Route::delete('students/documents/{document}',                 [StudentController::class, 'deleteDocument'])->name('students.documents.delete');
                 Route::post('students/{student}/portal-access',                [StudentController::class, 'createPortalAccess'])->name('students.portal-access.create');
                 Route::patch('students/{student}/portal-access/status',        [StudentController::class, 'togglePortalAccessStatus'])->name('students.portal-access.status');
                 Route::post('students/{student}/portal-access/reset-password', [StudentController::class, 'resetPortalPassword'])->name('students.portal-access.reset-password');
+                Route::post('students/{student}/portal-access/reveal-password', [StudentController::class, 'revealPortalPassword'])->name('students.portal-access.reveal-password');
+                Route::post('students/{student}/guardian-portal-access',        [StudentController::class, 'createGuardianPortalAccess'])->name('students.guardian-portal-access.create');
+                Route::post('students/{student}/guardian-portal-access/reset-password', [StudentController::class, 'resetGuardianPortalPassword'])->name('students.guardian-portal-access.reset-password');
+                Route::post('students/{student}/guardian-portal-access/reveal-password', [StudentController::class, 'revealGuardianPortalPassword'])->name('students.guardian-portal-access.reveal-password');
+                Route::post('students/{student}/portal-access/resend-credentials', [StudentController::class, 'resendPortalCredentialsEmail'])->name('students.portal-access.resend-credentials');
 
                 // Admission Inquiries & Visitors
                 Route::get('admissions/inquiries',                          [AdmissionInquiryController::class, 'index'])->name('admissions.inquiries');

@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Head, Link, router, usePage } from '@inertiajs/react';
 import {
     ArrowLeft, Pencil, FileUp, Trash2, FileText, User, GraduationCap, Users,
-    Shield, Key, CheckCircle2, DollarSign, Tag, CreditCard, ExternalLink, Copy, Check
+    Shield, Key, CheckCircle2, DollarSign, Tag, CreditCard, ExternalLink, Copy, Check,
+    Printer, Eye, Mail, RefreshCw, Send, Lock, UserCheck, AlertTriangle
 } from 'lucide-react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -21,9 +22,21 @@ import type { PageProps, Student } from '@/Types';
 interface PortalUser {
     id: number;
     name: string;
-    email: string;
+    username: string;
+    email: string | null;
     status: string;
+    must_change_password?: boolean;
+    has_active_temp_pass?: boolean;
+    temp_pass_expires_at?: string | null;
     last_login_at: string | null;
+}
+
+interface GuardianPortalUser extends PortalUser {
+    guardian_id: number;
+    guardian_name: string;
+    guardian_code: string | null;
+    linked_children_count: number;
+    linked_children?: Array<{ id: number; name: string; admission_no: string }>;
 }
 
 interface FinancialSummary {
@@ -106,6 +119,9 @@ interface FeeConcessionRow {
 interface Props extends PageProps {
     student: Student;
     portalUser?: PortalUser | null;
+    guardianPortalUser?: GuardianPortalUser | null;
+    canViewCredentials?: boolean;
+    canResetCredentials?: boolean;
     financialSummary?: FinancialSummary;
     challans?: FeeChallanRow[];
     payments?: FeePaymentRow[];
@@ -141,20 +157,37 @@ export default function ShowStudent() {
     const {
         student,
         portalUser,
+        guardianPortalUser,
+        canViewCredentials = false,
+        canResetCredentials = false,
         financialSummary,
         challans = [],
         payments = [],
         assignments = [],
         concessions = [],
         flash,
-    } = props;
+    } = props as any;
 
     const { format: formatMoney } = useCurrency();
     const [tab, setTab] = useState<'personal' | 'guardian' | 'documents' | 'fees'>('personal');
     const [docOpen, setDocOpen] = useState(false);
     const [createPortalOpen, setCreatePortalOpen] = useState(false);
     const [portalEmail, setPortalEmail] = useState(student.email || '');
-    const [copied, setCopied] = useState(false);
+
+    // Credentials State & Modals
+    const [revealModalOpen, setRevealModalOpen] = useState(false);
+    const [revealedData, setRevealedData] = useState<{
+        title: string;
+        username: string;
+        email: string | null;
+        temp_password: string;
+        expires_at: string | null;
+    } | null>(null);
+    const [isRevealing, setIsRevealing] = useState(false);
+    const [revealError, setRevealError] = useState<string | null>(null);
+
+    const [printSlipOpen, setPrintSlipOpen] = useState(false);
+    const [copiedKey, setCopiedKey] = useState<string | null>(null);
 
     const { register, handleSubmit, reset, formState: { errors, isSubmitting } } =
         useForm<DocForm>({ resolver: zodResolver(docSchema) });
@@ -177,24 +210,116 @@ export default function ShowStudent() {
         });
     };
 
+    const handleCreateGuardianPortal = () => {
+        router.post(`/school/students/${student.id}/guardian-portal-access`, {}, {
+            preserveScroll: true,
+        });
+    };
+
     const handleTogglePortalStatus = () => {
         if (confirm(`Are you sure you want to ${portalUser?.status === 'active' ? 'disable' : 'enable'} portal access for this student?`)) {
             router.patch(`/school/students/${student.id}/portal-access/status`, {}, { preserveScroll: true });
         }
     };
 
-    const handleResetPassword = () => {
-        if (confirm('Generate a new secure temporary password for this student?')) {
+    const handleResetStudentPassword = () => {
+        if (confirm(`Generate a new 14-day temporary password for ${student.full_name}? The student will be required to change it on next login.`)) {
             router.post(`/school/students/${student.id}/portal-access/reset-password`, {}, { preserveScroll: true });
         }
     };
 
-    const copyCredentials = () => {
-        if (!flash?.portal_credentials) return;
-        const text = `Student Portal Credentials:\nEmail: ${flash.portal_credentials.email}\nTemporary Password: ${flash.portal_credentials.temp_password}`;
+    const handleResetGuardianPassword = () => {
+        const linkedCount = guardianPortalUser?.linked_children_count || 1;
+        let confirmText = `Generate a new 14-day temporary password for guardian ${student.guardian?.name || 'Guardian'}? The parent will be required to change it on next login.`;
+
+        if (linkedCount > 1) {
+            confirmText = `WARNING: This parent account is shared by ${linkedCount} linked students.\n\nResetting it will change the parent's login for all linked children.\n\nAre you sure you want to proceed with resetting the parent password?`;
+        }
+
+        if (confirm(confirmText)) {
+            router.post(`/school/students/${student.id}/guardian-portal-access/reset-password`, {}, { preserveScroll: true });
+        }
+    };
+
+    const handleRevealStudent = async () => {
+        setIsRevealing(true);
+        setRevealError(null);
+        try {
+            const res = await fetch(`/school/students/${student.id}/portal-access/reveal-password`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content || '',
+                    'Accept': 'application/json',
+                },
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setRevealedData({
+                    title: `Student Portal Access (${student.full_name})`,
+                    username: data.username,
+                    email: data.email,
+                    temp_password: data.temp_password,
+                    expires_at: data.expires_at,
+                });
+                setRevealModalOpen(true);
+            } else {
+                setRevealError(data.error || 'Failed to reveal credentials.');
+                setRevealModalOpen(true);
+            }
+        } catch (e: any) {
+            setRevealError('Error fetching credentials.');
+            setRevealModalOpen(true);
+        } finally {
+            setIsRevealing(false);
+        }
+    };
+
+    const handleRevealGuardian = async () => {
+        setIsRevealing(true);
+        setRevealError(null);
+        try {
+            const res = await fetch(`/school/students/${student.id}/guardian-portal-access/reveal-password`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRF-TOKEN': (document.querySelector('meta[name="csrf-token"]') as HTMLMetaElement)?.content || '',
+                    'Accept': 'application/json',
+                },
+            });
+            const data = await res.json();
+            if (res.ok) {
+                setRevealedData({
+                    title: `Parent Portal Access (${student.guardian?.name || 'Guardian'})`,
+                    username: data.username,
+                    email: data.email,
+                    temp_password: data.temp_password,
+                    expires_at: data.expires_at,
+                });
+                setRevealModalOpen(true);
+            } else {
+                setRevealError(data.error || 'Failed to reveal credentials.');
+                setRevealModalOpen(true);
+            }
+        } catch (e: any) {
+            setRevealError('Error fetching credentials.');
+            setRevealModalOpen(true);
+        } finally {
+            setIsRevealing(false);
+        }
+    };
+
+    const handleResendCredentials = (type: 'student' | 'guardian') => {
+        const targetName = type === 'student' ? student.full_name : (student.guardian?.name || 'Guardian');
+        if (confirm(`Resend portal login credentials email to ${targetName}?`)) {
+            router.post(`/school/students/${student.id}/portal-access/resend-credentials`, { type }, { preserveScroll: true });
+        }
+    };
+
+    const copyToClipboard = (text: string, key: string) => {
         navigator.clipboard.writeText(text);
-        setCopied(true);
-        setTimeout(() => setCopied(false), 2500);
+        setCopiedKey(key);
+        setTimeout(() => setCopiedKey(null), 2500);
     };
 
     const InfoRow = ({ label, value }: { label: string; value?: string | null }) => (
@@ -204,6 +329,8 @@ export default function ShowStudent() {
         </div>
     );
 
+    const portalAccountCreated = (flash as any)?.portal_account_created;
+
     return (
         <AppLayout breadcrumbs={[
             { label: 'Students', href: '/school/students' },
@@ -211,37 +338,91 @@ export default function ShowStudent() {
         ]}>
             <Head title={student.full_name} />
 
-            {/* Flash Credential Banner (Shown only once) */}
-            {flash?.portal_credentials && (
-                <div className="mb-6 rounded-xl border border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 p-4 shadow-sm">
-                    <div className="flex items-start justify-between">
+            {/* Flash Portal Account Created Banner (Shown once after admission) */}
+            {portalAccountCreated && (
+                <div className="mb-6 rounded-xl border border-indigo-200 bg-indigo-50/60 dark:bg-indigo-950/30 p-4 shadow-sm">
+                    <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-4">
                         <div className="flex items-start gap-3">
-                            <div className="p-2 rounded-lg bg-emerald-600 text-white shrink-0">
+                            <div className="p-2 rounded-lg bg-indigo-600 text-white shrink-0 mt-0.5">
                                 <Key className="w-5 h-5" />
                             </div>
                             <div>
-                                <h3 className="text-base font-bold text-emerald-900 dark:text-emerald-100">
-                                    Student Portal Credentials Generated
+                                <h3 className="text-base font-bold text-slate-900 dark:text-white">
+                                    Student Admitted Successfully
                                 </h3>
-                                <p className="text-xs text-emerald-700 dark:text-emerald-300 mt-0.5">
-                                    Please copy and share these credentials now. For security, this temporary password will never be displayed again.
+                                <p className="text-xs text-slate-600 dark:text-slate-300 mt-0.5">
+                                    Portal access accounts have been configured. Temporary passwords are not stored in session and can be securely revealed on-demand.
                                 </p>
-                                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 bg-white dark:bg-slate-900 p-3 rounded-lg border border-emerald-200 dark:border-emerald-800 text-xs">
-                                    <div>
-                                        <span className="text-slate-400 uppercase tracking-wider text-[10px]">Login Email:</span>
-                                        <p className="font-mono font-bold text-slate-900 dark:text-white mt-0.5">{flash.portal_credentials.email}</p>
+
+                                <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                                    {/* Student Card */}
+                                    <div className="bg-white dark:bg-slate-900 p-3 rounded-lg border border-indigo-100 dark:border-indigo-900/50 space-y-2">
+                                        <div className="flex items-center justify-between font-semibold text-indigo-700 dark:text-indigo-300 pb-1 border-b">
+                                            <span className="flex items-center gap-1.5"><GraduationCap className="w-3.5 h-3.5" /> Student portal account created ✓</span>
+                                            {portalAccountCreated.student?.email_queued && (
+                                                <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">Email Queued</Badge>
+                                            )}
+                                        </div>
+                                        <div className="flex justify-between items-center pt-1">
+                                            <span className="text-slate-500">Username:</span>
+                                            <span className="font-mono font-bold text-slate-900 dark:text-white">{portalAccountCreated.student?.username}</span>
+                                        </div>
+                                        {canViewCredentials && (
+                                            <div className="pt-1 flex justify-end">
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="h-7 px-2.5 text-xs text-indigo-600 border-indigo-200 hover:bg-indigo-50"
+                                                    onClick={() => handleRevealStudent()}
+                                                >
+                                                    <Eye className="w-3.5 h-3.5 mr-1" /> View Student Credentials
+                                                </Button>
+                                            </div>
+                                        )}
                                     </div>
-                                    <div>
-                                        <span className="text-slate-400 uppercase tracking-wider text-[10px]">Temporary Password:</span>
-                                        <p className="font-mono font-bold text-indigo-600 dark:text-indigo-400 mt-0.5">{flash.portal_credentials.temp_password}</p>
+
+                                    {/* Guardian Card */}
+                                    <div className="bg-white dark:bg-slate-900 p-3 rounded-lg border border-purple-100 dark:border-purple-900/50 space-y-2">
+                                        <div className="flex items-center justify-between font-semibold text-purple-700 dark:text-purple-300 pb-1 border-b">
+                                            <span className="flex items-center gap-1.5">
+                                                <Users className="w-3.5 h-3.5" /> Parent portal account {portalAccountCreated.guardian?.is_existing ? 'linked ✓' : 'created ✓'}
+                                            </span>
+                                            {portalAccountCreated.guardian?.is_existing ? (
+                                                <Badge variant="outline" className="text-[10px] bg-slate-100 text-slate-600">Existing Account</Badge>
+                                            ) : portalAccountCreated.guardian?.email_queued ? (
+                                                <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">Email Queued</Badge>
+                                            ) : null}
+                                        </div>
+                                        <div className="flex justify-between items-center pt-1">
+                                            <span className="text-slate-500">Username:</span>
+                                            <span className="font-mono font-bold text-slate-900 dark:text-white">{portalAccountCreated.guardian?.username || '—'}</span>
+                                        </div>
+                                        {canViewCredentials && !portalAccountCreated.guardian?.is_existing && (
+                                            <div className="pt-1 flex justify-end">
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    className="h-7 px-2.5 text-xs text-purple-600 border-purple-200 hover:bg-purple-50"
+                                                    onClick={() => handleRevealGuardian()}
+                                                >
+                                                    <Eye className="w-3.5 h-3.5 mr-1" /> View Parent Credentials
+                                                </Button>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                             </div>
                         </div>
-                        <Button size="sm" onClick={copyCredentials} className="bg-emerald-600 hover:bg-emerald-700 text-white inline-flex items-center gap-1.5 shrink-0 ml-4">
-                            {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
-                            {copied ? 'Copied' : 'Copy Credentials'}
-                        </Button>
+
+                        <div className="flex sm:flex-col gap-2 shrink-0 self-end sm:self-start">
+                            <Button
+                                size="sm"
+                                onClick={() => setPrintSlipOpen(true)}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white inline-flex items-center gap-1.5"
+                            >
+                                <Printer className="w-4 h-4" /> Print Credential Slip
+                            </Button>
+                        </div>
                     </div>
                 </div>
             )}
@@ -284,8 +465,8 @@ export default function ShowStudent() {
                 </div>
             </div>
 
-            {/* Quick stats + Portal Access Row */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            {/* Quick stats row */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
                 {[
                     { icon: GraduationCap, label: 'Class', value: student.school_class?.name ?? '—' },
                     { icon: Users,         label: 'Section', value: student.section?.name ?? '—' },
@@ -303,41 +484,306 @@ export default function ShowStudent() {
                         </CardContent>
                     </Card>
                 ))}
+            </div>
 
-                {/* Portal Access Card */}
-                <Card className="dark:bg-slate-900 border-slate-200 dark:border-slate-800">
-                    <CardContent className="p-4 flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                            <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${portalUser ? (portalUser.status === 'active' ? 'bg-emerald-50 text-emerald-600 dark:bg-emerald-950/40' : 'bg-amber-50 text-amber-600') : 'bg-slate-100 text-slate-400 dark:bg-slate-800'}`}>
-                                <Shield className="w-4 h-4" />
-                            </div>
-                            <div>
-                                <p className="text-xs text-slate-500">Portal Access</p>
-                                <div className="flex items-center gap-1.5 mt-0.5">
-                                    <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${portalUser ? (portalUser.status === 'active' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700') : 'bg-slate-100 text-slate-600'}`}>
-                                        {portalUser ? portalUser.status : 'Not Created'}
-                                    </span>
+            {/* Portal Accounts & Security Section */}
+            <div className="mb-6 space-y-3">
+                <div className="flex items-center justify-between">
+                    <div>
+                        <h2 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                            <Shield className="w-4 h-4 text-indigo-600" />
+                            Portal Accounts & Credentials
+                        </h2>
+                        <p className="text-xs text-slate-500">
+                            Independent authentication credentials for student and parent portals.
+                        </p>
+                    </div>
+                    <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setPrintSlipOpen(true)}
+                        className="text-xs inline-flex items-center gap-1.5"
+                    >
+                        <Printer className="w-3.5 h-3.5" /> Print Credential Slip
+                    </Button>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* 1. Student Portal Card */}
+                    <Card className="dark:bg-slate-900 border-slate-200 dark:border-slate-800">
+                        <CardHeader className="pb-3 flex flex-row items-start justify-between space-y-0">
+                            <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 rounded-lg bg-indigo-50 dark:bg-indigo-950/40 text-indigo-600 flex items-center justify-center">
+                                    <GraduationCap className="w-4 h-4" />
+                                </div>
+                                <div>
+                                    <CardTitle className="text-sm font-bold">Student Portal Login</CardTitle>
+                                    <CardDescription className="text-xs">Student dashboard access</CardDescription>
                                 </div>
                             </div>
-                        </div>
-                        <div>
-                            {!portalUser ? (
-                                <Button size="sm" variant="outline" onClick={() => setCreatePortalOpen(true)} className="text-xs">
-                                    Enable
-                                </Button>
+                            <div className="flex items-center gap-1.5">
+                                <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                                    portalUser
+                                        ? portalUser.status === 'active'
+                                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                            : 'bg-amber-100 text-amber-700'
+                                        : 'bg-slate-100 text-slate-500'
+                                }`}>
+                                    {portalUser ? portalUser.status : 'Not Created'}
+                                </span>
+                            </div>
+                        </CardHeader>
+                        <CardContent className="space-y-3 text-xs">
+                            {portalUser ? (
+                                <>
+                                    <div className="space-y-2 bg-slate-50 dark:bg-slate-800/40 p-3 rounded-lg border border-slate-100 dark:border-slate-800">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-slate-500">Username:</span>
+                                            <div className="flex items-center gap-1">
+                                                <span className="font-mono font-bold text-slate-900 dark:text-white">{portalUser.username}</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => copyToClipboard(portalUser.username, 'student_u')}
+                                                    className="p-1 hover:text-indigo-600 transition-colors"
+                                                    title="Copy username"
+                                                >
+                                                    {copiedKey === 'student_u' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3 text-slate-400" />}
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-slate-500">Email:</span>
+                                            <span className="text-slate-700 dark:text-slate-300 font-mono">
+                                                {portalUser.email || <span className="italic text-slate-400">None (Username Login Only)</span>}
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-slate-500">Password Status:</span>
+                                            {portalUser.must_change_password ? (
+                                                <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
+                                                    Temporary (Change on Login)
+                                                </Badge>
+                                            ) : (
+                                                <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">
+                                                    Permanent Password Set
+                                                </Badge>
+                                            )}
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-slate-500">Last Login:</span>
+                                            <span className="text-slate-500">{portalUser.last_login_at || 'Never'}</span>
+                                        </div>
+                                    </div>
+
+                                    {/* Action buttons */}
+                                    <div className="flex items-center justify-between pt-1 flex-wrap gap-2">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                            {canViewCredentials && portalUser.has_active_temp_pass && (
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={handleRevealStudent}
+                                                    disabled={isRevealing}
+                                                    className="h-7 px-2.5 text-xs text-indigo-700 dark:text-indigo-300 border-indigo-200 dark:border-indigo-800 hover:bg-indigo-50 inline-flex items-center gap-1"
+                                                >
+                                                    <Eye className="w-3 h-3" /> Reveal Password
+                                                </Button>
+                                            )}
+                                            {canResetCredentials && (
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={handleResetStudentPassword}
+                                                    className="h-7 px-2.5 text-xs inline-flex items-center gap-1"
+                                                >
+                                                    <Key className="w-3 h-3" /> Reset Password
+                                                </Button>
+                                            )}
+                                            {canViewCredentials && portalUser.email && portalUser.has_active_temp_pass && (
+                                                <Button
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    onClick={() => handleResendCredentials('student')}
+                                                    className="h-7 px-2 text-xs text-slate-600 hover:text-indigo-600 inline-flex items-center gap-1"
+                                                    title="Resend login credentials email"
+                                                >
+                                                    <Mail className="w-3 h-3" /> Resend Email
+                                                </Button>
+                                            )}
+                                        </div>
+                                        {canResetCredentials && (
+                                            <Button
+                                                size="sm"
+                                                variant="ghost"
+                                                onClick={handleTogglePortalStatus}
+                                                className="h-7 px-2 text-xs text-slate-500 hover:text-red-600"
+                                            >
+                                                {portalUser.status === 'active' ? 'Disable' : 'Enable'}
+                                            </Button>
+                                        )}
+                                    </div>
+                                </>
                             ) : (
-                                <div className="flex items-center gap-1">
-                                    <Button size="sm" variant="ghost" onClick={handleResetPassword} title="Reset Temporary Password" className="h-8 px-2 text-xs">
-                                        <Key className="w-3.5 h-3.5 text-slate-500" />
-                                    </Button>
-                                    <Button size="sm" variant="outline" onClick={handleTogglePortalStatus} className="h-8 px-2 text-xs">
-                                        {portalUser.status === 'active' ? 'Disable' : 'Activate'}
+                                <div className="text-center py-4 space-y-2">
+                                    <p className="text-xs text-slate-500">No portal account created for this student yet.</p>
+                                    <Button size="sm" onClick={() => setCreatePortalOpen(true)} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white">
+                                        Create Student Portal Account
                                     </Button>
                                 </div>
                             )}
-                        </div>
-                    </CardContent>
-                </Card>
+                        </CardContent>
+                    </Card>
+
+                    {/* 2. Parent / Guardian Portal Card */}
+                    <Card className="dark:bg-slate-900 border-slate-200 dark:border-slate-800">
+                        <CardHeader className="pb-3 flex flex-row items-start justify-between space-y-0">
+                            <div className="flex items-center gap-2.5">
+                                <div className="w-8 h-8 rounded-lg bg-purple-50 dark:bg-purple-950/40 text-purple-600 flex items-center justify-center">
+                                    <Users className="w-4 h-4" />
+                                </div>
+                                <div>
+                                    <CardTitle className="text-sm font-bold">Parent / Guardian Login</CardTitle>
+                                    <CardDescription className="text-xs">
+                                        {student.guardian ? student.guardian.name : 'Guardian'} ({student.guardian?.relation || 'Parent'})
+                                    </CardDescription>
+                                </div>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                                <span className={`text-[11px] px-2 py-0.5 rounded-full font-medium ${
+                                    guardianPortalUser
+                                        ? guardianPortalUser.status === 'active'
+                                            ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300'
+                                            : 'bg-amber-100 text-amber-700'
+                                        : 'bg-slate-100 text-slate-500'
+                                }`}>
+                                    {guardianPortalUser ? guardianPortalUser.status : 'Not Created'}
+                                </span>
+                            </div>
+                        </CardHeader>
+                        <CardContent className="space-y-3 text-xs">
+                            {guardianPortalUser ? (
+                                <>
+                                    <div className="space-y-2 bg-slate-50 dark:bg-slate-800/40 p-3 rounded-lg border border-slate-100 dark:border-slate-800">
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-slate-500">Guardian Code:</span>
+                                            <Badge variant="outline" className="font-mono text-[10px]">
+                                                {guardianPortalUser.guardian_code || `PAR-${guardianPortalUser.guardian_id}`}
+                                            </Badge>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-slate-500">Username:</span>
+                                            <div className="flex items-center gap-1">
+                                                <span className="font-mono font-bold text-slate-900 dark:text-white">{guardianPortalUser.username}</span>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => copyToClipboard(guardianPortalUser.username, 'guardian_u')}
+                                                    className="p-1 hover:text-purple-600 transition-colors"
+                                                    title="Copy username"
+                                                >
+                                                    {copiedKey === 'guardian_u' ? <Check className="w-3 h-3 text-emerald-600" /> : <Copy className="w-3 h-3 text-slate-400" />}
+                                                </button>
+                                            </div>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-slate-500">Email:</span>
+                                            <span className="text-slate-700 dark:text-slate-300 font-mono">
+                                                {guardianPortalUser.email || <span className="italic text-slate-400">None (Username Login Only)</span>}
+                                            </span>
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-slate-500">Linked Siblings / Children:</span>
+                                            <span className="font-semibold text-purple-700 dark:text-purple-300">
+                                                {guardianPortalUser.linked_children_count} Student{guardianPortalUser.linked_children_count === 1 ? '' : 's'}
+                                            </span>
+                                        </div>
+                                        {guardianPortalUser.linked_children_count > 1 && (
+                                            <div className="rounded-md bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 p-2.5 text-xs text-amber-800 dark:text-amber-300">
+                                                <div className="flex items-center gap-1.5 font-semibold text-amber-800 dark:text-amber-200">
+                                                    <AlertTriangle className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400 shrink-0" />
+                                                    Shared Parent Account ({guardianPortalUser.linked_children_count} Students)
+                                                </div>
+                                                <p className="mt-1 text-[11px] text-amber-700 dark:text-amber-400 leading-relaxed">
+                                                    This parent account is shared by {guardianPortalUser.linked_children_count} linked students. Resetting it will change the parent's login for all linked children.
+                                                </p>
+                                            </div>
+                                        )}
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-slate-500">Password Status:</span>
+                                            {guardianPortalUser.must_change_password ? (
+                                                <Badge variant="outline" className="text-[10px] bg-amber-50 text-amber-700 border-amber-200">
+                                                    Temporary (Change on Login)
+                                                </Badge>
+                                            ) : (
+                                                <Badge variant="outline" className="text-[10px] bg-emerald-50 text-emerald-700 border-emerald-200">
+                                                    Permanent Password Set
+                                                </Badge>
+                                            )}
+                                        </div>
+                                        <div className="flex justify-between items-center">
+                                            <span className="text-slate-500">Last Login:</span>
+                                            <span className="text-slate-500">{guardianPortalUser.last_login_at || 'Never'}</span>
+                                        </div>
+                                    </div>
+
+                                    {/* Action buttons */}
+                                    <div className="flex items-center justify-between pt-1 flex-wrap gap-2">
+                                        <div className="flex items-center gap-1.5 flex-wrap">
+                                            {canViewCredentials && guardianPortalUser.has_active_temp_pass && (
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={handleRevealGuardian}
+                                                    disabled={isRevealing}
+                                                    className="h-7 px-2.5 text-xs text-purple-700 dark:text-purple-300 border-purple-200 dark:border-purple-800 hover:bg-purple-50 inline-flex items-center gap-1"
+                                                >
+                                                    <Eye className="w-3 h-3" /> Reveal Password
+                                                </Button>
+                                            )}
+                                            {canResetCredentials && (
+                                                <Button
+                                                    size="sm"
+                                                    variant="outline"
+                                                    onClick={handleResetGuardianPassword}
+                                                    className="h-7 px-2.5 text-xs inline-flex items-center gap-1"
+                                                >
+                                                    <Key className="w-3 h-3" /> Reset Password
+                                                </Button>
+                                            )}
+                                            {canViewCredentials && guardianPortalUser.email && guardianPortalUser.has_active_temp_pass && (
+                                                <Button
+                                                    size="sm"
+                                                    variant="ghost"
+                                                    onClick={() => handleResendCredentials('guardian')}
+                                                    className="h-7 px-2 text-xs text-slate-600 hover:text-purple-600 inline-flex items-center gap-1"
+                                                    title="Resend parent login credentials email"
+                                                >
+                                                    <Mail className="w-3 h-3" /> Resend Email
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </div>
+                                </>
+                            ) : (
+                                <div className="text-center py-4 space-y-2">
+                                    <p className="text-xs text-slate-500">
+                                        {student.guardian
+                                            ? `Guardian record exists (${student.guardian.name}) without a portal account.`
+                                            : 'No guardian linked to this student.'}
+                                    </p>
+                                    {student.guardian && (
+                                        <Button
+                                            size="sm"
+                                            onClick={handleCreateGuardianPortal}
+                                            className="text-xs bg-purple-600 hover:bg-purple-700 text-white"
+                                        >
+                                            Create Parent Portal Account
+                                        </Button>
+                                    )}
+                                </div>
+                            )}
+                        </CardContent>
+                    </Card>
+                </div>
             </div>
 
             {/* Tabs Navigation */}
@@ -773,6 +1219,207 @@ export default function ShowStudent() {
                             <Button type="submit" className="bg-indigo-600 hover:bg-indigo-700 text-white">Create Account</Button>
                         </DialogFooter>
                     </form>
+                </DialogContent>
+            </Dialog>
+            {/* Reveal Temporary Password Dialog */}
+            <Dialog open={revealModalOpen} onOpenChange={setRevealModalOpen}>
+                <DialogContent className="sm:max-w-md">
+                    <DialogHeader>
+                        <DialogTitle className="flex items-center gap-2">
+                            <Key className="w-5 h-5 text-indigo-600" />
+                            {revealedData?.title || 'Active Temporary Password'}
+                        </DialogTitle>
+                    </DialogHeader>
+
+                    {revealError ? (
+                        <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700">
+                            {revealError}
+                        </div>
+                    ) : revealedData ? (
+                        <div className="space-y-4 pt-1">
+                            <p className="text-xs text-slate-500">
+                                This temporary access key remains valid until the user signs in and changes it, or until expiry.
+                            </p>
+
+                            <div className="p-3 bg-slate-50 dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 space-y-2.5 text-xs">
+                                <div>
+                                    <span className="text-slate-400 uppercase tracking-wider text-[10px]">Login Username:</span>
+                                    <div className="flex items-center justify-between font-mono font-bold text-slate-900 dark:text-white mt-0.5">
+                                        <span>{revealedData.username}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => copyToClipboard(revealedData.username, 'modal_user')}
+                                            className="p-1 hover:text-indigo-600 text-slate-400"
+                                        >
+                                            {copiedKey === 'modal_user' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                                        </button>
+                                    </div>
+                                </div>
+                                {revealedData.email && (
+                                    <div>
+                                        <span className="text-slate-400 uppercase tracking-wider text-[10px]">Associated Email:</span>
+                                        <div className="font-mono text-slate-700 dark:text-slate-300 mt-0.5">
+                                            {revealedData.email}
+                                        </div>
+                                    </div>
+                                )}
+                                <div className="pt-2 border-t border-slate-200 dark:border-slate-800">
+                                    <span className="text-slate-400 uppercase tracking-wider text-[10px]">Temporary Password:</span>
+                                    <div className="flex items-center justify-between font-mono font-bold text-indigo-600 dark:text-indigo-400 mt-1 bg-indigo-50/70 dark:bg-indigo-950/40 p-2 rounded">
+                                        <span className="text-sm">{revealedData.temp_password}</span>
+                                        <button
+                                            type="button"
+                                            onClick={() => copyToClipboard(revealedData.temp_password, 'modal_pass')}
+                                            className="p-1 hover:text-indigo-600 text-slate-400"
+                                        >
+                                            {copiedKey === 'modal_pass' ? <Check className="w-3.5 h-3.5 text-emerald-600" /> : <Copy className="w-3.5 h-3.5" />}
+                                        </button>
+                                    </div>
+                                </div>
+                                {revealedData.expires_at && (
+                                    <p className="text-[10px] text-slate-400 pt-1">
+                                        Expires on: {revealedData.expires_at}
+                                    </p>
+                                )}
+                            </div>
+
+                            <DialogFooter className="flex justify-between sm:justify-between items-center pt-2">
+                                <Button
+                                    type="button"
+                                    variant="outline"
+                                    size="sm"
+                                    onClick={() => {
+                                        setRevealModalOpen(false);
+                                        setPrintSlipOpen(true);
+                                    }}
+                                    className="text-xs inline-flex items-center gap-1.5"
+                                >
+                                    <Printer className="w-3.5 h-3.5" /> Print Credential Slip
+                                </Button>
+                                <Button size="sm" onClick={() => setRevealModalOpen(false)}>Done</Button>
+                            </DialogFooter>
+                        </div>
+                    ) : null}
+                </DialogContent>
+            </Dialog>
+
+            {/* Print Credential Slip Dialog */}
+            <Dialog open={printSlipOpen} onOpenChange={setPrintSlipOpen}>
+                <DialogContent className="sm:max-w-xl p-0 overflow-hidden">
+                    <div className="p-6 space-y-5" id="printable-credential-slip">
+                        <div className="flex justify-between items-start border-b pb-4">
+                            <div>
+                                <h2 className="text-lg font-bold text-slate-900 dark:text-white">
+                                    {props.branding?.tenant_name || props.active_school?.name || 'StudentXces'}
+                                </h2>
+                                <p className="text-xs text-slate-500">Student & Parent Portal Credentials</p>
+                            </div>
+                            <div className="text-right text-xs text-slate-400">
+                                <p className="font-mono">{student.admission_no}</p>
+                                <p className="text-[10px]">{new Date().toLocaleDateString()}</p>
+                            </div>
+                        </div>
+
+                        {/* Student Bio */}
+                        <div className="grid grid-cols-2 gap-3 bg-slate-50 dark:bg-slate-900/60 p-3 rounded-lg border border-slate-100 dark:border-slate-800 text-xs">
+                            <div>
+                                <span className="text-slate-500">Student:</span>{' '}
+                                <strong className="text-slate-900 dark:text-white">{student.full_name}</strong>
+                            </div>
+                            <div>
+                                <span className="text-slate-500">Admission No:</span>{' '}
+                                <strong className="text-slate-900 dark:text-white font-mono">{student.admission_no}</strong>
+                            </div>
+                            <div>
+                                <span className="text-slate-500">Class:</span>{' '}
+                                <strong>{student.school_class?.name || '—'} {student.section?.name ? `(${student.section.name})` : ''}</strong>
+                            </div>
+                            <div>
+                                <span className="text-slate-500">Guardian:</span>{' '}
+                                <strong>{student.guardian?.name || '—'} ({student.guardian?.guardian_code || '—'})</strong>
+                            </div>
+                        </div>
+
+                        {/* Credential Cards */}
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {/* Student Box */}
+                            <div className="border border-indigo-200 dark:border-indigo-900/60 rounded-lg p-3 space-y-2 text-xs bg-indigo-50/20">
+                                <div className="flex items-center gap-1.5 font-bold text-indigo-700 dark:text-indigo-300 border-b pb-1">
+                                    <GraduationCap className="w-4 h-4" /> Student Portal Login
+                                </div>
+                                <div>
+                                    <span className="text-slate-500">Login Username:</span>
+                                    <p className="font-mono font-bold text-slate-900 dark:text-white mt-0.5">
+                                        {portalUser?.username || '—'}
+                                    </p>
+                                </div>
+                                {portalUser?.email && (
+                                    <div>
+                                        <span className="text-slate-500">Email:</span>
+                                        <p className="font-mono text-slate-700 dark:text-slate-300">{portalUser.email}</p>
+                                    </div>
+                                )}
+                                <div>
+                                    <span className="text-slate-500">Temporary Password:</span>
+                                    <p className="font-mono font-bold text-indigo-600 dark:text-indigo-400 bg-white dark:bg-slate-900 p-1.5 rounded border border-indigo-100 dark:border-indigo-900 mt-0.5">
+                                        {revealedData?.username === portalUser?.username
+                                            ? revealedData.temp_password
+                                            : '•••••••• (Click Reveal on card to view password)'}
+                                    </p>
+                                </div>
+                            </div>
+
+                            {/* Guardian Box */}
+                            <div className="border border-purple-200 dark:border-purple-900/60 rounded-lg p-3 space-y-2 text-xs bg-purple-50/20">
+                                <div className="flex items-center gap-1.5 font-bold text-purple-700 dark:text-purple-300 border-b pb-1">
+                                    <Users className="w-4 h-4" /> Parent Portal Login
+                                </div>
+                                <div>
+                                    <span className="text-slate-500">Login Username:</span>
+                                    <p className="font-mono font-bold text-slate-900 dark:text-white mt-0.5">
+                                        {guardianPortalUser?.username || '—'}
+                                    </p>
+                                </div>
+                                {guardianPortalUser?.email && (
+                                    <div>
+                                        <span className="text-slate-500">Email:</span>
+                                        <p className="font-mono text-slate-700 dark:text-slate-300">{guardianPortalUser.email}</p>
+                                    </div>
+                                )}
+                                <div>
+                                    <span className="text-slate-500">Temporary Password:</span>
+                                    <p className="font-mono font-bold text-purple-600 dark:text-purple-400 bg-white dark:bg-slate-900 p-1.5 rounded border border-purple-100 dark:border-purple-900 mt-0.5">
+                                        {revealedData?.username === guardianPortalUser?.username
+                                            ? revealedData.temp_password
+                                            : (guardianPortalUser ? '•••••••• (Click Reveal on card to view password)' : '—')}
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Security instructions */}
+                        <div className="p-3 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 rounded-lg text-xs text-amber-800 dark:text-amber-300 space-y-1">
+                            <p className="font-semibold flex items-center gap-1">
+                                <Lock className="w-3.5 h-3.5" /> First-Login Security Instructions:
+                            </p>
+                            <p>1. Open the portal sign-in page and enter your assigned Username and Temporary Password.</p>
+                            <p>2. You will be prompted to replace your temporary password with a new personal password on your first sign-in.</p>
+                            <p>3. Keep your private credentials secure. Never share your password with unauthorized persons.</p>
+                        </div>
+                    </div>
+
+                    <DialogFooter className="p-4 bg-slate-50 dark:bg-slate-900 border-t flex justify-between sm:justify-between">
+                        <Button type="button" variant="outline" size="sm" onClick={() => setPrintSlipOpen(false)}>
+                            Close
+                        </Button>
+                        <Button
+                            size="sm"
+                            onClick={() => window.print()}
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white inline-flex items-center gap-1.5"
+                        >
+                            <Printer className="w-4 h-4" /> Print
+                        </Button>
+                    </DialogFooter>
                 </DialogContent>
             </Dialog>
         </AppLayout>

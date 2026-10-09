@@ -92,9 +92,10 @@ class HandleInertiaRequests extends Middleware
                 ];
             }),
             'flash' => [
-                'success' => fn () => session('success'),
-                'error'   => fn () => session('error'),
-                'warning' => fn () => session('warning'),
+                'success'                => fn () => session('success'),
+                'error'                  => fn () => session('error'),
+                'warning'                => fn () => session('warning'),
+                'portal_account_created' => fn () => session('portal_account_created'),
             ],
             'faviconUrl' => fn () => once(function () {
                 $path = PlatformSetting::get('platform_favicon');

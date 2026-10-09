@@ -50,9 +50,7 @@ class ProfileController extends Controller
             'password'         => ['required', 'confirmed', Password::min(8)],
         ]);
 
-        auth()->user()->update([
-            'password' => Hash::make($data['password']),
-        ]);
+        \App\Services\PortalCredentialService::completePasswordChange(auth()->user(), $data['password']);
 
         return back()->with('success', 'Password changed successfully.');
     }

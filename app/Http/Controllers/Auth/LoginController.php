@@ -73,12 +73,33 @@ class LoginController extends Controller
 
     public function store(Request $request): RedirectResponse
     {
-        $credentials = $request->validate([
-            'email'    => ['required', 'email'],
-            'password' => ['required', 'string'],
-        ]);
+        $loginInput = trim($request->input('login') ?? $request->input('email') ?? '');
+        $password   = (string) $request->input('password');
 
-        if (! Auth::attempt($credentials, $request->boolean('remember'))) {
+        if ($loginInput === '' || $password === '') {
+            throw ValidationException::withMessages([
+                'email' => __('auth.failed'),
+            ]);
+        }
+
+        $isEmail = filter_var($loginInput, FILTER_VALIDATE_EMAIL) !== false;
+        $credentialKey = $isEmail ? 'email' : 'username';
+
+        $authenticated = Auth::attempt([
+            $credentialKey => $loginInput,
+            'password'     => $password,
+        ], $request->boolean('remember'));
+
+        // Case-insensitive fallback for username
+        if (! $authenticated && ! $isEmail) {
+            $userCandidate = \App\Models\User::whereRaw('LOWER(username) = ?', [strtolower($loginInput)])->first();
+            if ($userCandidate && \Illuminate\Support\Facades\Hash::check($password, $userCandidate->password)) {
+                Auth::login($userCandidate, $request->boolean('remember'));
+                $authenticated = true;
+            }
+        }
+
+        if (! $authenticated) {
             throw ValidationException::withMessages([
                 'email' => __('auth.failed'),
             ]);
@@ -87,6 +108,28 @@ class LoginController extends Controller
         $request->session()->regenerate();
 
         $user = Auth::user();
+
+        // Check if account is inactive
+        if ($user->status !== 'active') {
+            Auth::logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+
+            throw ValidationException::withMessages([
+                'email' => 'Your account has been deactivated. Please contact your school administrator.',
+            ]);
+        }
+
+        // Check if temporary password has expired
+        if ($user->must_change_password && $user->temporary_password_expires_at && $user->temporary_password_expires_at->isPast()) {
+            Auth::logout();
+            $request->session()->invalidate();
+            $request->session()->regenerateToken();
+
+            throw ValidationException::withMessages([
+                'email' => 'Your temporary password has expired. Please contact your school administrator to reset your credentials.',
+            ]);
+        }
 
         // Host-based login domain isolation
         $resolvedSchool = app(\App\Services\ActiveSchoolContext::class)->getHostResolvedSchool();
@@ -112,6 +155,10 @@ class LoginController extends Controller
                 'school_id'  => $user->school_id,
             ])
             ->log('User logged in');
+
+        if ($user->must_change_password) {
+            return redirect()->route('password.first-change');
+        }
 
         return redirect()->route('dashboard');
     }

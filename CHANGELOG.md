@@ -3,7 +3,70 @@
 All meaningful product changes, enhancements, fixes and production releases
 are recorded here.
 
-## [Unreleased]
+## [2026-10-10 00:15 PKT] — Student & Parent Portal Credentials Architecture & Security Hardening
+
+**Module:** Admissions / Authentication / Student & Parent Portals / Multi-Tenancy<br>
+**Status:** Local / Uncommitted<br>
+**Commit:** Pending
+
+### Added
+- **Flexible Username & Email Authentication:**
+  - Added nullable unique `users.username` column and converted `users.email` to nullable.
+  - Authentication pipeline (`LoginController`) accepts combined "Email or Username" input.
+  - Automatically discriminates between email address (via RFC filter) and system-generated username, authenticating securely against `password`.
+  - Case-insensitive username lookup with tenant context preservation.
+  - Added `guardians.guardian_code` column with sequential tenant-scoped code generation (`PAR-00001`).
+  - Tenant-scoped composite uniqueness: `UNIQUE (school_id, guardian_code)` on `guardians` table, allowing identical sequential codes (`PAR-00001`) across distinct schools while rejecting duplicate codes within the same school.
+- **Deterministic Portal Credential Service (`PortalCredentialService`):**
+  - Tenant-safe short school code resolution (`resolveSchoolCode`) using explicit settings, name acronyms (e.g. `LCS` for "Lahore Cambridge School"), or sanitized slug fallback.
+  - Sequential, globally unique username generation:
+    - Students: `{SCHOOL_CODE}-{ADMISSION_NO}` (e.g., `LCS-ADM-2026-0001`).
+    - Guardians: `{SCHOOL_CODE}-PAR-{GUARDIAN_CODE}` (e.g., `LCS-PAR-00001`).
+  - Automated dual provisioning during student admission:
+    - Creates student portal account with Spatie `student` role.
+    - Creates or links guardian portal account with Spatie `parent` role.
+    - Link Existing Guardian support: prevents duplicate parent portal accounts for siblings while linking family units seamlessly without resetting existing parent credentials.
+- **Secure Temporary Credential Lifecycle & Expiry Enforcement:**
+  - Generates cryptographically secure temporary passwords.
+  - Dual storage: one-way bcrypt hashed in `users.password`, encrypted via `Crypt::encryptString` in `users.temporary_password_encrypted`.
+  - 14-day expiry via `users.temporary_password_expires_at`.
+  - Enforced `users.must_change_password` flag.
+  - Option B expiry semantics: expired temporary credentials cannot authenticate (logs out, rejects with descriptive message without leaking credentials), cannot be revealed by administrators (returns 422), and cannot be resent via email.
+  - Mandatory First-Login Password Change flow: intercepting middleware (`EnsurePasswordIsChanged`), dedicated controller (`FirstLoginPasswordController`), and view (`FirstChangePassword.tsx`) which clears the encrypted temporary password, unsets `must_change_password`, and redirects user to their role-specific dashboard.
+- **Production-Safe Permission Provisioning & RBAC:**
+  - Additive idempotent data migration `database/migrations/2026_10_09_201500_add_portal_credential_permissions.php` creating `students.portal_credentials.view` and `students.portal_credentials.reset`.
+  - Assigned by default strictly to `super-admin` and `school-admin` roles.
+  - Explicitly denied to `teacher`, `accountant`, `receptionist`, `librarian`, and cross-tenant administrators.
+- **Queue Payload Privacy & Worker Runtime Decryption:**
+  - `SendPortalCredentialsEmailJob` serializes only non-secret identifiers (`userId`, `targetType`).
+  - Personal contact emails and temporary passwords eliminated from queued payloads (`jobs.payload`).
+  - Target contact email dynamically resolved at runtime from domain models (`$user->student?->email` or `$user->guardian?->email`).
+  - In-memory decryption occurs only during worker execution, immediately unsetting sensitive plain strings after mailable dispatch.
+- **Session Secret Elimination & Secure Reveal UX:**
+  - Complete elimination of plaintext temporary credentials from Laravel session and flash storage (`admission_credentials`, `portal_credentials`, `guardian_credentials`).
+  - Replaced with non-secret metadata flash `portal_account_created` (username, queued status, is_existing flag).
+  - Profile view renders on-demand "View Student Credentials" / "View Parent Credentials" buttons calling authorized HTTPS reveal endpoints with audit logging.
+- **Administrative Portal Management & Audit Controls:**
+  - Student Profile view (`Show.tsx`) dual portal cards for Student and Parent:
+    - Account status badges (Active/Inactive, Password Changed / Temporary Active / Expired).
+    - Reveal Password modal with copy buttons.
+    - Printable Credential Slip modal with school branding, student details, credentials, and parent portal info.
+    - Password Reset action generating fresh temporary credentials and logging Spatie activity log audit records without plaintext passwords.
+    - Shared Multi-Child Family Account warning banner and confirmation modal when resetting shared parent passwords.
+    - Toggle portal status and Resend email actions.
+  - Admission Form Step 2 ("Parent / Guardian") segmented selector:
+    - "New Guardian" mode.
+    - "Link Existing Guardian" mode with dynamic debounced search by name, phone, email, or guardian code, auto-populating contact info and showing existing enrolled siblings.
+- **Test Suite (`tests/Feature/PortalAuthenticationAndCredentialsTest.php`):**
+  - 21 comprehensive feature tests covering student and guardian auto-provisioning, username login, email login, case insensitivity, multi-school tenant-scoped guardian code uniqueness, global username uniqueness, sibling shared-guardian portal linking without duplicate users or credential resets, 14-day expiry check, temporary password decryption, mandatory first-login password update with temporary password wipe, mail failure rollback isolation, role/cross-tenant authorization, audit log generation, queue payload serialization privacy with sentinel checks, and session flash secret elimination.
+
+---
+
+## [2026-10-03 18:15 PKT] — Canonical Academic Year Matching & Super Admin Permission Fix
+
+**Module:** Admissions / Fees / Multi-Tenancy<br>
+**Status:** Production<br>
+**Commit:** `a8e6ac3`
 
 ### Fixed
 - **Admissions & Fee Setup:** Resolved fee structure lookup failure during student admission where active class fee structures failed to match equivalent academic sessions (e.g. `2026-2027` fee structure vs `Academic Year 2026-27` session).

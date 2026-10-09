@@ -16,6 +16,9 @@ import {
     Lock,
     Plus,
     X,
+    Search,
+    UserCheck,
+    Link2,
 } from 'lucide-react';
 import AppLayout from '@/Layouts/AppLayout';
 import { Button } from '@/components/ui/button';
@@ -79,6 +82,7 @@ const schema = z.object({
     // Class
     class_id:   z.coerce.number().int().positive('Select a class'),
     section_id: z.coerce.number().int().positive().nullable().optional(),
+    guardian_id: z.coerce.number().int().positive().nullable().optional(),
     // Guardian
     guardian: z.object({
         name:       z.string().min(1, 'Guardian name is required'),
@@ -182,6 +186,59 @@ export default function CreateStudent() {
     const [dueDate, setDueDate] = useState<string>(initialDueDate);
     const [dueDateError, setDueDateError] = useState<string | null>(null);
     const [financialNotes, setFinancialNotes] = useState<string>('');
+
+    // Guardian Linking State
+    const [guardianMode, setGuardianMode] = useState<'new' | 'existing'>('new');
+    const [guardianSearchQuery, setGuardianSearchQuery] = useState<string>('');
+    const [guardianSearchResults, setGuardianSearchResults] = useState<any[]>([]);
+    const [isSearchingGuardians, setIsSearchingGuardians] = useState<boolean>(false);
+    const [selectedExistingGuardian, setSelectedExistingGuardian] = useState<any | null>(null);
+
+    const handleSearchGuardians = async (q: string) => {
+        setGuardianSearchQuery(q);
+        if (!q.trim() || q.trim().length < 2) {
+            setGuardianSearchResults([]);
+            return;
+        }
+        setIsSearchingGuardians(true);
+        try {
+            const res = await fetch(`/school/students/guardians/search?q=${encodeURIComponent(q.trim())}`, {
+                headers: { Accept: 'application/json' },
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setGuardianSearchResults(data);
+            }
+        } catch (err) {
+            console.error(err);
+        } finally {
+            setIsSearchingGuardians(false);
+        }
+    };
+
+    const handleSelectExistingGuardian = (g: any) => {
+        setSelectedExistingGuardian(g);
+        setValue('guardian_id', g.id);
+        setValue('guardian.name', g.name);
+        setValue('guardian.relation', g.relation || 'Father');
+        setValue('guardian.phone', g.phone || '');
+        setValue('guardian.email', g.email || '');
+        setValue('guardian.occupation', g.occupation || '');
+        setValue('guardian.address', g.address || '');
+        clearErrors('guardian.name');
+        clearErrors('guardian.relation');
+    };
+
+    const handleClearExistingGuardian = () => {
+        setSelectedExistingGuardian(null);
+        setValue('guardian_id', null);
+        setValue('guardian.name', '');
+        setValue('guardian.relation', 'Father');
+        setValue('guardian.phone', '');
+        setValue('guardian.email', '');
+        setValue('guardian.occupation', '');
+        setValue('guardian.address', '');
+    };
 
     // Active Academic Year object
     const selectedAcademicYear = useMemo(() => {
@@ -750,63 +807,203 @@ export default function CreateStudent() {
                     {step === 2 && (
                         <Card className="dark:bg-slate-900 border-slate-200 dark:border-slate-800">
                             <CardHeader className="pb-3">
-                                <CardTitle className="text-sm">Guardian Information</CardTitle>
-                                <CardDescription className="text-xs">
-                                    Emergency contact and guardian relationship details.
-                                </CardDescription>
-                            </CardHeader>
-                            <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                <Field
-                                    name="guardian.name"
-                                    label="Guardian Name"
-                                    placeholder="Mr. John Doe"
-                                    required
-                                />
-                                <div className="space-y-1.5">
-                                    <Label className="text-sm font-medium">
-                                        Relation <span className="text-red-500">*</span>
-                                    </Label>
-                                    <Select
-                                        defaultValue="Father"
-                                        onValueChange={(v) => setValue('guardian.relation', v)}
-                                    >
-                                        <SelectTrigger className="h-9">
-                                            <SelectValue />
-                                        </SelectTrigger>
-                                        <SelectContent>
-                                            {['Father', 'Mother', 'Guardian', 'Uncle', 'Aunt', 'Sibling'].map(
-                                                (r) => (
-                                                    <SelectItem key={r} value={r}>
-                                                        {r}
-                                                    </SelectItem>
-                                                )
-                                            )}
-                                        </SelectContent>
-                                    </Select>
+                                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                                    <div>
+                                        <CardTitle className="text-sm">Guardian Information</CardTitle>
+                                        <CardDescription className="text-xs">
+                                            Emergency contact, sibling linkage, and parent portal access.
+                                        </CardDescription>
+                                    </div>
+                                    <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-800 rounded-lg text-xs self-start">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setGuardianMode('new');
+                                                handleClearExistingGuardian();
+                                            }}
+                                            className={`px-3 py-1 rounded-md font-medium transition-colors ${
+                                                guardianMode === 'new'
+                                                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
+                                                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                                            }`}
+                                        >
+                                            New Guardian
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setGuardianMode('existing')}
+                                            className={`px-3 py-1 rounded-md font-medium transition-colors flex items-center gap-1.5 ${
+                                                guardianMode === 'existing'
+                                                    ? 'bg-white dark:bg-slate-700 text-slate-900 dark:text-white shadow-sm'
+                                                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900'
+                                            }`}
+                                        >
+                                            <Link2 className="w-3.5 h-3.5 text-indigo-500" />
+                                            Link Existing Guardian
+                                        </button>
+                                    </div>
                                 </div>
-                                <Field
-                                    name="guardian.phone"
-                                    label="Phone"
-                                    placeholder="+923000000000"
-                                />
-                                <Field
-                                    name="guardian.email"
-                                    label="Email"
-                                    type="email"
-                                    placeholder="guardian@email.com"
-                                />
-                                <Field
-                                    name="guardian.occupation"
-                                    label="Occupation"
-                                    placeholder="Business / Service"
-                                />
-                                <div className="sm:col-span-2 space-y-1.5">
-                                    <Label className="text-sm font-medium">Address</Label>
-                                    <Textarea
-                                        rows={2}
-                                        className="resize-none"
-                                        {...register('guardian.address')}
+                            </CardHeader>
+                            <CardContent className="space-y-4">
+                                {guardianMode === 'existing' && !selectedExistingGuardian && (
+                                    <div className="p-4 rounded-lg border border-dashed border-indigo-200 dark:border-indigo-900/50 bg-indigo-50/30 dark:bg-indigo-950/20 space-y-3">
+                                        <div className="space-y-1">
+                                            <Label className="text-xs font-semibold text-indigo-950 dark:text-indigo-200 flex items-center gap-1.5">
+                                                <Search className="w-3.5 h-3.5 text-indigo-600" />
+                                                Search Existing Guardian / Family
+                                            </Label>
+                                            <div className="flex gap-2">
+                                                <Input
+                                                    type="text"
+                                                    placeholder="Search by parent name, phone, email, or code (e.g. PAR-00001)..."
+                                                    value={guardianSearchQuery}
+                                                    onChange={(e) => handleSearchGuardians(e.target.value)}
+                                                    className="h-9 bg-white dark:bg-slate-900 text-xs"
+                                                />
+                                            </div>
+                                            <p className="text-[11px] text-slate-500">
+                                                Type at least 2 characters to search across registered parents and siblings.
+                                            </p>
+                                        </div>
+
+                                        {isSearchingGuardians && (
+                                            <p className="text-xs text-indigo-600 animate-pulse">Searching guardians...</p>
+                                        )}
+
+                                        {guardianSearchResults.length > 0 && (
+                                            <div className="space-y-2 mt-2 max-h-60 overflow-y-auto">
+                                                {guardianSearchResults.map((g) => (
+                                                    <div
+                                                        key={g.id}
+                                                        className="p-3 bg-white dark:bg-slate-900 rounded-lg border border-slate-200 dark:border-slate-800 flex items-center justify-between gap-3 text-xs hover:border-indigo-400 transition-colors"
+                                                    >
+                                                        <div>
+                                                            <div className="flex items-center gap-2">
+                                                                <span className="font-semibold text-slate-900 dark:text-white">{g.name}</span>
+                                                                <Badge variant="outline" className="text-[10px] py-0 px-1.5">
+                                                                    {g.guardian_code || `PAR-${g.id}`}
+                                                                </Badge>
+                                                                <span className="text-slate-400">({g.relation || 'Guardian'})</span>
+                                                            </div>
+                                                            <div className="text-[11px] text-slate-500 mt-0.5 flex flex-wrap gap-x-3">
+                                                                <span>Phone: {g.phone || '—'}</span>
+                                                                <span>Email: {g.email || '—'}</span>
+                                                                {g.students_count > 0 && (
+                                                                    <span className="text-indigo-600 dark:text-indigo-400 font-medium">
+                                                                        Children ({g.students_count}): {g.students_names.join(', ')}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                        <Button
+                                                            type="button"
+                                                            size="sm"
+                                                            onClick={() => handleSelectExistingGuardian(g)}
+                                                            className="h-7 text-xs bg-indigo-600 hover:bg-indigo-700 text-white shrink-0"
+                                                        >
+                                                            Select
+                                                        </Button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+
+                                        {!isSearchingGuardians && guardianSearchQuery.length >= 2 && guardianSearchResults.length === 0 && (
+                                            <p className="text-xs text-slate-500 italic">No existing guardians found matching "{guardianSearchQuery}".</p>
+                                        )}
+                                    </div>
+                                )}
+
+                                {guardianMode === 'existing' && selectedExistingGuardian && (
+                                    <div className="p-3 rounded-lg border border-emerald-300 dark:border-emerald-800 bg-emerald-50/50 dark:bg-emerald-950/20 flex items-center justify-between gap-3">
+                                        <div className="flex items-start gap-2.5">
+                                            <div className="p-1.5 rounded-full bg-emerald-600 text-white shrink-0 mt-0.5">
+                                                <UserCheck className="w-4 h-4" />
+                                            </div>
+                                            <div>
+                                                <div className="flex items-center gap-2">
+                                                    <span className="text-xs font-bold text-emerald-900 dark:text-emerald-100">
+                                                        Linked to: {selectedExistingGuardian.name}
+                                                    </span>
+                                                    <Badge className="bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300 text-[10px]">
+                                                        {selectedExistingGuardian.guardian_code || `PAR-${selectedExistingGuardian.id}`}
+                                                    </Badge>
+                                                </div>
+                                                <p className="text-[11px] text-emerald-700 dark:text-emerald-300 mt-0.5">
+                                                    Parent portal account will be shared across siblings without resetting existing login credentials.
+                                                </p>
+                                                {selectedExistingGuardian.students_names?.length > 0 && (
+                                                    <p className="text-[11px] text-slate-500 mt-0.5">
+                                                        Existing enrolled siblings: <span className="font-medium text-slate-700 dark:text-slate-300">{selectedExistingGuardian.students_names.join(', ')}</span>
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+                                        <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={handleClearExistingGuardian}
+                                            className="h-7 text-xs border-emerald-300 dark:border-emerald-700 text-emerald-800 dark:text-emerald-200 shrink-0"
+                                        >
+                                            Change
+                                        </Button>
+                                    </div>
+                                )}
+
+                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                    <Field
+                                        name="guardian.name"
+                                        label="Guardian Name"
+                                        placeholder="Mr. John Doe"
+                                        required
                                     />
+                                    <div className="space-y-1.5">
+                                        <Label className="text-sm font-medium">
+                                            Relation <span className="text-red-500">*</span>
+                                        </Label>
+                                        <Select
+                                            value={watch('guardian.relation') || 'Father'}
+                                            onValueChange={(v) => setValue('guardian.relation', v)}
+                                        >
+                                            <SelectTrigger className="h-9">
+                                                <SelectValue />
+                                            </SelectTrigger>
+                                            <SelectContent>
+                                                {['Father', 'Mother', 'Guardian', 'Uncle', 'Aunt', 'Sibling'].map(
+                                                    (r) => (
+                                                        <SelectItem key={r} value={r}>
+                                                            {r}
+                                                        </SelectItem>
+                                                    )
+                                                )}
+                                            </SelectContent>
+                                        </Select>
+                                    </div>
+                                    <Field
+                                        name="guardian.phone"
+                                        label="Phone"
+                                        placeholder="+923000000000"
+                                    />
+                                    <Field
+                                        name="guardian.email"
+                                        label="Email"
+                                        type="email"
+                                        placeholder="guardian@email.com (optional)"
+                                    />
+                                    <Field
+                                        name="guardian.occupation"
+                                        label="Occupation"
+                                        placeholder="Business / Service"
+                                    />
+                                    <div className="sm:col-span-2 space-y-1.5">
+                                        <Label className="text-sm font-medium">Address</Label>
+                                        <Textarea
+                                            rows={2}
+                                            className="resize-none"
+                                            {...register('guardian.address')}
+                                        />
+                                    </div>
                                 </div>
                             </CardContent>
                         </Card>

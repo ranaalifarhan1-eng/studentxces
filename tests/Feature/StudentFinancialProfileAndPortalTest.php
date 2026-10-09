@@ -227,11 +227,8 @@ class StudentFinancialProfileAndPortalTest extends TestCase
             ]);
 
         $response->assertRedirect();
-        $response->assertSessionHas('portal_credentials');
-
-        $credentials = session('portal_credentials');
-        $this->assertEquals('hassan.shahzad@greenfield.edu.pk', $credentials['email']);
-        $this->assertNotEmpty($credentials['temp_password']);
+        $response->assertSessionHas('success');
+        $response->assertSessionMissing('portal_credentials');
 
         // User should exist in database with student role
         $createdUser = User::where('email', 'hassan.shahzad@greenfield.edu.pk')->first();
@@ -240,12 +237,17 @@ class StudentFinancialProfileAndPortalTest extends TestCase
         $this->assertTrue($createdUser->hasRole('student'));
         $this->assertEquals('active', $createdUser->status);
 
-        // Password must NOT be stored in plaintext
-        $this->assertTrue(Hash::check($credentials['temp_password'], $createdUser->password));
-
         // Student must be linked to User
         $this->student->refresh();
         $this->assertEquals($createdUser->id, $this->student->user_id);
+
+        // Plaintext temporary password can be securely revealed via authorized endpoint
+        $revealRes = $this->actingAs($this->adminUser)
+            ->postJson(route('school.students.portal-access.reveal-password', $this->student->id));
+        $revealRes->assertOk();
+        $tempPass = $revealRes->json('temp_password');
+        $this->assertNotEmpty($tempPass);
+        $this->assertTrue(Hash::check($tempPass, $createdUser->password));
     }
 
     public function test_toggle_portal_access_status(): void
@@ -296,15 +298,19 @@ class StudentFinancialProfileAndPortalTest extends TestCase
             ->post(route('school.students.portal-access.reset-password', $this->student->id));
 
         $response->assertRedirect();
-        $response->assertSessionHas('portal_credentials');
-
-        $credentials = session('portal_credentials');
-        $this->assertEquals('reset-test@greenfield.edu.pk', $credentials['email']);
-        $this->assertNotEmpty($credentials['temp_password']);
+        $response->assertSessionHas('success');
+        $response->assertSessionMissing('portal_credentials');
 
         $user->refresh();
         $this->assertNotEquals($oldHash, $user->password);
-        $this->assertTrue(Hash::check($credentials['temp_password'], $user->password));
+
+        // Decrypt / reveal via authorized endpoint
+        $revealRes = $this->actingAs($this->adminUser)
+            ->postJson(route('school.students.portal-access.reveal-password', $this->student->id));
+        $revealRes->assertOk();
+        $tempPass = $revealRes->json('temp_password');
+        $this->assertNotEmpty($tempPass);
+        $this->assertTrue(Hash::check($tempPass, $user->password));
     }
 
     public function test_fee_payments_hub_defaults_to_challans_and_displays_unpaid_vouchers(): void

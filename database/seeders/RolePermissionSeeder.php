@@ -21,6 +21,7 @@ class RolePermissionSeeder extends Seeder
         // Students
         'students.view', 'students.create', 'students.edit', 'students.delete',
         'students.import', 'students.export', 'students.promote', 'students.idcard',
+        'students.portal_credentials.view', 'students.portal_credentials.reset',
 
         // Staff
         'staff.view', 'staff.create', 'staff.edit', 'staff.delete',

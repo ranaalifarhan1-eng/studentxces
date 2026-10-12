@@ -3,11 +3,34 @@
 All meaningful product changes, enhancements, fixes and production releases
 are recorded here.
 
+## [2026-10-12 21:30 PKT] — Safe Subject Deletion Pilot & RBAC Permission Architecture
+
+**Module:** Academics / RBAC / Multi-Tenancy<br>
+**Status:** Committed<br>
+**Commit:** ebdcb53
+
+### Added
+- **Safe Subject Deletion Dialog (`delete-confirm-dialog.tsx`):**
+  - Reusable Base UI confirmation dialog with double-click locking, non-dismissing error flow, and inline error banner.
+  - Prevents rapid re-submissions by disabling confirm/cancel actions during network requests.
+- **Dedicated Subject Delete Permission (`subjects.delete`):**
+  - Additive idempotent migration `database/migrations/2026_10_12_170000_add_subjects_delete_permission.php` registering `subjects.delete`.
+  - Granted by default exclusively to `super-admin` and `school-admin`.
+  - Excluded from staff roles (`principal`, `teacher`, `accountant`, `librarian`) by default, while supporting dynamic assignment to custom roles.
+  - Updated `RolePermissionSeeder.php` to explicitly assign `subjects.delete` to `school-admin` alongside wildcard rules.
+
+### Enhanced
+- **Subject Delete Guarding & Cascade Protection:**
+  - `SubjectController::destroy` verifies `$request->user()->can('subjects.delete')` instead of checking hardcoded role strings.
+  - Multi-tenant fail-closed scoping using Route Model Binding and defensive school ownership verification.
+  - Validates all 6 child dependencies (`timetables`, `marks`, `homework`, `lesson_plans`, `syllabi`, `online_classes`) before deletion, returning descriptive feedback and preventing orphaned records.
+  - `Subjects/Index.tsx` uses `canDelete` capability prop to conditionally render the delete button.
+
 ## [2026-10-12 21:00 PKT] — HR Payroll Architecture Hardening
 
 **Module:** HR & Payroll / Multi-Tenancy<br>
 **Status:** Committed<br>
-**Commit:** Pending
+**Commit:** db990f5
 
 ### Added
 - **Timezone-Safe Payroll Period Resolver (`payroll-period.ts`):**

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Head, router, usePage } from '@inertiajs/react';
 import { Plus, Pencil, Trash2, BookOpen } from 'lucide-react';
 import { useForm } from 'react-hook-form';
@@ -12,11 +12,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Card, CardContent } from '@/components/ui/card';
+import DeleteConfirmDialog from '@/components/ui/delete-confirm-dialog';
 import type { PageProps, SchoolClass, Subject } from '@/Types';
 
 interface Props extends PageProps {
-    subjects: Subject[];
-    classes:  Pick<SchoolClass, 'id' | 'name'>[];
+    subjects:  Subject[];
+    classes:   Pick<SchoolClass, 'id' | 'name'>[];
+    canDelete?: boolean;
 }
 
 const schema = z.object({
@@ -30,12 +32,16 @@ const schema = z.object({
 type FormData = z.infer<typeof schema>;
 
 export default function SubjectsIndex() {
-    const { subjects, classes } = usePage<Props>().props;
+    const { subjects, classes, canDelete = false } = usePage().props as unknown as Props;
     const [open, setOpen]       = useState(false);
     const [editing, setEditing] = useState<Subject | null>(null);
+    const [deletingSubject, setDeletingSubject] = useState<Subject | null>(null);
+    const [isDeleting, setIsDeleting]           = useState(false);
+    const isDeletingRef                         = useRef(false);
+    const [deleteError, setDeleteError]         = useState<string | null>(null);
 
     const { register, handleSubmit, reset, setValue, formState: { errors, isSubmitting } } =
-        useForm<FormData>({ resolver: zodResolver(schema), defaultValues: { type: 'theory', full_marks: 100, pass_marks: 33 } });
+        useForm<FormData>({ resolver: zodResolver(schema) as any, defaultValues: { type: 'theory', full_marks: 100, pass_marks: 33 } });
 
     const openCreate = () => { reset({ type: 'theory', full_marks: 100, pass_marks: 33 }); setEditing(null); setOpen(true); };
     const openEdit   = (s: Subject) => { reset({ class_id: s.class_id, name: s.name, code: s.code ?? '', type: s.type, full_marks: s.full_marks, pass_marks: s.pass_marks }); setEditing(s); setOpen(true); };
@@ -48,8 +54,41 @@ export default function SubjectsIndex() {
         }
     };
 
-    const destroy = (s: Subject) => {
-        if (confirm(`Delete "${s.name}"?`)) router.delete(`/school/subjects/${s.id}`);
+    const openDelete = (s: Subject) => {
+        setDeleteError(null);
+        setDeletingSubject(s);
+    };
+
+    const handleConfirmDelete = () => {
+        if (!deletingSubject || isDeleting || isDeletingRef.current) return;
+        isDeletingRef.current = true;
+        setIsDeleting(true);
+        setDeleteError(null);
+        router.delete(`/school/subjects/${deletingSubject.id}`, {
+            onSuccess: (page) => {
+                const flashErr = (page.props as any).flash?.error;
+                const fieldErr = (page.props as any).errors?.error;
+                const err = flashErr || fieldErr;
+                if (err) {
+                    setDeleteError(err);
+                    setIsDeleting(false);
+                    isDeletingRef.current = false;
+                    return;
+                }
+                setDeletingSubject(null);
+                setDeleteError(null);
+                isDeletingRef.current = false;
+            },
+            onError: (errs) => {
+                setDeleteError(errs.error || 'Failed to delete subject.');
+                setIsDeleting(false);
+                isDeletingRef.current = false;
+            },
+            onFinish: () => {
+                setIsDeleting(false);
+                isDeletingRef.current = false;
+            },
+        });
     };
 
     return (
@@ -101,7 +140,9 @@ export default function SubjectsIndex() {
                                     <TableCell>
                                         <div className="flex items-center gap-1">
                                             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(s)}><Pencil className="w-3.5 h-3.5" /></Button>
-                                            <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:text-red-600" onClick={() => destroy(s)}><Trash2 className="w-3.5 h-3.5" /></Button>
+                                            {canDelete && (
+                                                <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:text-red-600" onClick={() => openDelete(s)} title="Delete Subject"><Trash2 className="w-3.5 h-3.5" /></Button>
+                                            )}
                                         </div>
                                     </TableCell>
                                 </TableRow>
@@ -129,7 +170,7 @@ export default function SubjectsIndex() {
                             </div>
                             <div className="space-y-1.5">
                                 <Label>Type <span className="text-red-500">*</span></Label>
-                                <Select defaultValue={editing?.type ?? 'theory'} onValueChange={(v) => setValue('type', v as 'theory' | 'practical')}>
+                                <Select defaultValue={editing?.type ?? 'theory'} onValueChange={(v: string) => setValue('type', v as 'theory' | 'practical')}>
                                     <SelectTrigger><SelectValue /></SelectTrigger>
                                     <SelectContent>
                                         <SelectItem value="theory">Theory</SelectItem>
@@ -139,7 +180,7 @@ export default function SubjectsIndex() {
                             </div>
                             <div className="space-y-1.5 col-span-2">
                                 <Label>Class <span className="text-red-500">*</span></Label>
-                                <Select defaultValue={editing ? String(editing.class_id) : undefined} onValueChange={(v) => setValue('class_id', Number(v))}>
+                                <Select defaultValue={editing ? String(editing.class_id) : undefined} onValueChange={(v: string) => setValue('class_id', Number(v))}>
                                     <SelectTrigger><SelectValue placeholder="Select class" /></SelectTrigger>
                                     <SelectContent>
                                         {classes.map((c) => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
@@ -165,6 +206,16 @@ export default function SubjectsIndex() {
                     </form>
                 </DialogContent>
             </Dialog>
+
+            <DeleteConfirmDialog
+                open={Boolean(deletingSubject)}
+                onOpenChange={(isOpen: boolean) => { if (!isOpen) { setDeletingSubject(null); setDeleteError(null); } }}
+                title="Delete Subject"
+                entityName={deletingSubject?.name}
+                loading={isDeleting}
+                error={deleteError}
+                onConfirm={handleConfirmDelete}
+            />
         </AppLayout>
     );
 }

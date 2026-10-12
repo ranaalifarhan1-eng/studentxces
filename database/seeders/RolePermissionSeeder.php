@@ -15,6 +15,9 @@ class RolePermissionSeeder extends Seeder
         // Academic Years
         'academic-years.view', 'academic-years.create', 'academic-years.edit', 'academic-years.delete',
 
+        // Subjects
+        'subjects.delete',
+
         // Users
         'users.view', 'users.create', 'users.edit', 'users.delete', 'users.impersonate',
 
@@ -81,7 +84,7 @@ class RolePermissionSeeder extends Seeder
         'super-admin' => '*',
 
         'school-admin' => [
-            'academic-years.*', 'users.view', 'users.create', 'users.edit',
+            'academic-years.*', 'subjects.*', 'subjects.delete', 'users.view', 'users.create', 'users.edit',
             'students.*', 'staff.*',
             'attendance.*', 'timetable.*',
             'exams.*', 'marks.*', 'results.*', 'reportcard.*',

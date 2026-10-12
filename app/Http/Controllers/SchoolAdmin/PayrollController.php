@@ -112,49 +112,118 @@ class PayrollController extends Controller
             ->when($data['department_id'] ?? null, fn ($q) => $q->where('department_id', $data['department_id']))
             ->get();
 
+        if ($staff->isEmpty()) {
+            return back()->with('warning', 'No active staff found for payroll generation.');
+        }
+
         $generated = 0;
+        $skippedPaid = 0;
+        $skippedNoStructure = 0;
         $workingDays = (int) $data['working_days'];
 
-        DB::transaction(function () use ($staff, $sid, $monthYear, $workingDays, &$generated) {
-            foreach ($staff as $member) {
-                $struct = $member->salaryStructure;
-                if (!$struct) continue;
+        try {
+            DB::transaction(function () use ($staff, $sid, $monthYear, $workingDays, &$generated, &$skippedPaid, &$skippedNoStructure) {
+                foreach ($staff as $member) {
+                    $struct = $member->salaryStructure;
+                    if (!$struct) {
+                        $skippedNoStructure++;
+                        continue;
+                    }
 
-                // Check attendance for the month
-                [$year, $month] = explode('-', $monthYear);
-                $presentDays = Attendance::where('school_id', $sid)
-                    ->where('attendable_type', 'App\\Models\\Staff')
-                    ->where('attendable_id', $member->id)
-                    ->whereYear('date', $year)
-                    ->whereMonth('date', $month)
-                    ->whereIn('status', ['present', 'late'])
-                    ->count();
+                    $existing = Payroll::where('school_id', $sid)
+                        ->where('staff_id', $member->id)
+                        ->where('month_year', $monthYear)
+                        ->first();
 
-                if ($presentDays === 0) $presentDays = $workingDays; // fallback if no attendance data
+                    // Idempotency rule: Never overwrite or recalculate paid payroll records
+                    if ($existing && $existing->status === 'paid') {
+                        $skippedPaid++;
+                        continue;
+                    }
 
-                $perDaySalary = $struct->net_salary / $workingDays;
-                $leaveDays    = max(0, $workingDays - $presentDays);
-                $deduction    = $struct->total_deductions + ($leaveDays > 0 ? $perDaySalary * $leaveDays : 0);
-                $netSalary    = round((float) $struct->basic_salary + $struct->total_allowances - $deduction, 2);
+                    // Check attendance for the month
+                    [$year, $month] = explode('-', $monthYear);
+                    $presentDays = Attendance::where('school_id', $sid)
+                        ->where('attendable_type', 'App\\Models\\Staff')
+                        ->where('attendable_id', $member->id)
+                        ->whereYear('date', $year)
+                        ->whereMonth('date', $month)
+                        ->whereIn('status', ['present', 'late'])
+                        ->count();
 
-                Payroll::updateOrCreate(
-                    ['school_id' => $sid, 'staff_id' => $member->id, 'month_year' => $monthYear],
-                    [
-                        'basic_salary'        => $struct->basic_salary,
-                        'total_allowances'    => $struct->total_allowances,
-                        'total_deductions'    => $struct->total_deductions,
-                        'net_salary'          => max(0, $netSalary),
-                        'working_days'        => $workingDays,
-                        'present_days'        => $presentDays,
-                        'leave_days'          => $leaveDays,
-                        'allowances_snapshot' => $struct->allowances,
-                        'deductions_snapshot' => $struct->deductions,
-                        'status'              => 'generated',
-                    ]
-                );
-                $generated++;
+                    if ($presentDays === 0) {
+                        $presentDays = $workingDays; // fallback if no attendance data
+                    }
+
+                    $perDaySalary = $struct->net_salary / $workingDays;
+                    $leaveDays    = max(0, $workingDays - $presentDays);
+                    $deduction    = $struct->total_deductions + ($leaveDays > 0 ? $perDaySalary * $leaveDays : 0);
+                    $netSalary    = round((float) $struct->basic_salary + $struct->total_allowances - $deduction, 2);
+
+                    try {
+                        Payroll::updateOrCreate(
+                            ['school_id' => $sid, 'staff_id' => $member->id, 'month_year' => $monthYear],
+                            [
+                                'basic_salary'        => $struct->basic_salary,
+                                'total_allowances'    => $struct->total_allowances,
+                                'total_deductions'    => $struct->total_deductions,
+                                'net_salary'          => max(0, $netSalary),
+                                'working_days'        => $workingDays,
+                                'present_days'        => $presentDays,
+                                'leave_days'          => $leaveDays,
+                                'allowances_snapshot' => $struct->allowances,
+                                'deductions_snapshot' => $struct->deductions,
+                                'status'              => 'generated',
+                            ]
+                        );
+                        $generated++;
+                    } catch (\Illuminate\Database\UniqueConstraintViolationException|\Illuminate\Database\QueryException $e) {
+                        // Concurrent insertion resolution: safely fetch the committed record
+                        $concurrentRecord = Payroll::where('school_id', $sid)
+                            ->where('staff_id', $member->id)
+                            ->where('month_year', $monthYear)
+                            ->first();
+
+                        if ($concurrentRecord && $concurrentRecord->status === 'paid') {
+                            $skippedPaid++;
+                        } elseif ($concurrentRecord) {
+                            $concurrentRecord->update([
+                                'basic_salary'        => $struct->basic_salary,
+                                'total_allowances'    => $struct->total_allowances,
+                                'total_deductions'    => $struct->total_deductions,
+                                'net_salary'          => max(0, $netSalary),
+                                'working_days'        => $workingDays,
+                                'present_days'        => $presentDays,
+                                'leave_days'          => $leaveDays,
+                                'allowances_snapshot' => $struct->allowances,
+                                'deductions_snapshot' => $struct->deductions,
+                                'status'              => 'generated',
+                            ]);
+                            $generated++;
+                        } else {
+                            throw $e;
+                        }
+                    }
+                }
+            });
+        } catch (\Throwable $e) {
+            \Illuminate\Support\Facades\Log::error('Payroll generation concurrency error: ' . $e->getMessage());
+            return back()->with('error', 'A concurrency conflict occurred while processing payroll. Please refresh and try again.');
+        }
+
+        if ($generated === 0) {
+            if ($skippedPaid > 0) {
+                return back()->with('warning', "Payroll generation skipped: all {$skippedPaid} staff already have paid payroll for {$monthYear}.");
             }
-        });
+            if ($skippedNoStructure > 0) {
+                return back()->with('warning', 'No payroll generated: selected staff do not have a salary structure configured.');
+            }
+            return back()->with('warning', 'No payroll records were generated.');
+        }
+
+        if ($skippedPaid > 0) {
+            return back()->with('success', "Payroll generated for {$generated} staff member(s). {$skippedPaid} already paid payroll(s) were preserved.");
+        }
 
         return back()->with('success', "Payroll generated for {$generated} staff members.");
     }

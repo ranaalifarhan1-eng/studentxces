@@ -3,6 +3,25 @@
 All meaningful product changes, enhancements, fixes and production releases
 are recorded here.
 
+## [2026-10-12 21:00 PKT] — HR Payroll Architecture Hardening
+
+**Module:** HR & Payroll / Multi-Tenancy<br>
+**Status:** Committed<br>
+**Commit:** Pending
+
+### Added
+- **Timezone-Safe Payroll Period Resolver (`payroll-period.ts`):**
+  - Pure helper resolving target `YYYY-MM` periods using configured school timezone, shared application/locale timezone, and browser-local system calendar fallback without hardcoded regional fallbacks.
+  - Comprehensive unit test suite (`tests/Unit/PayrollPeriodHelperTest.mjs`) verifying month boundary transitions, timezone absence, and invalid timezone fallbacks.
+
+### Enhanced
+- **HR Payroll Idempotency & Overwrite Safety:**
+  - `PayrollController::generate` guarantees that previously disbursed/paid records (`status === 'paid'`) are strictly immutable and never recalculated or overwritten during batch runs.
+  - Safe in-place updates for `draft` and `generated` records, backed by composite unique constraint `payroll_staff_month_unique` on `(school_id, staff_id, month_year)`.
+  - In-flight handling of concurrent race conditions with user-friendly conflict messaging, preventing exposure of raw database exceptions.
+  - Informative flash feedback for empty staff, unconfigured salary structures, all-paid skips, and partial generation batches.
+  - `Payroll.tsx` renders `flash.warning` and `flash.error` banners alongside `flash.success`.
+
 ## [2026-10-10 00:15 PKT] — Student & Parent Portal Credentials Architecture & Security Hardening
 
 **Module:** Admissions / Authentication / Student & Parent Portals / Multi-Tenancy<br>

@@ -11,6 +11,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Card, CardContent } from '@/components/ui/card';
 import { DollarSign, Zap, Settings2, CheckCircle2, Clock } from 'lucide-react';
 import { useCurrency } from '@/lib/currency';
+import { getLocalMonthYear } from '@/lib/payroll-period';
 import type { PageProps, PaginatedResponse } from '@/Types';
 
 interface Department { id: number; name: string; }
@@ -36,11 +37,18 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 export default function PayrollIndex({ payrolls, departments, filters, stats }: Props) {
-    const { flash } = usePage<PageProps>().props;
+    const { flash, active_school, locale } = usePage().props as unknown as PageProps;
     const { format: formatMoney } = useCurrency();
+    const schoolTimezone = active_school?.timezone || locale?.timezone;
+    const defaultMonth = getLocalMonthYear(schoolTimezone);
+
     const [genOpen, setGenOpen] = useState(false);
-    const [genMonth, setGenMonth] = useState(new Date().toISOString().slice(0, 7));
-    const [genDept, setGenDept] = useState('');
+    const [genForm, setGenForm] = useState({
+        month_year: defaultMonth,
+        department_id: '',
+        working_days: '30',
+    });
+    const [genErrors, setGenErrors] = useState<{ working_days?: string; month_year?: string }>({});
     const [generating, setGenerating] = useState(false);
 
     function applyFilter(key: string, value: string) {
@@ -48,9 +56,27 @@ export default function PayrollIndex({ payrolls, departments, filters, stats }: 
     }
 
     function handleGenerate() {
+        const errors: { working_days?: string; month_year?: string } = {};
+        if (!genForm.month_year) {
+            errors.month_year = 'Month is required';
+        }
+        const days = Number(genForm.working_days);
+        if (!genForm.working_days || !Number.isInteger(days) || days < 1 || days > 31) {
+            errors.working_days = 'Working days must be an integer between 1 and 31';
+        }
+        if (Object.keys(errors).length > 0) {
+            setGenErrors(errors);
+            return;
+        }
+        setGenErrors({});
         setGenerating(true);
-        router.post('/school/hr/payroll/generate', { month_year: genMonth, department_id: genDept || undefined }, {
-            onFinish: () => { setGenerating(false); setGenOpen(false); },
+        router.post('/school/hr/payroll/generate', {
+            month_year: genForm.month_year,
+            department_id: genForm.department_id || undefined,
+            working_days: days,
+        }, {
+            onSuccess: () => setGenOpen(false),
+            onFinish: () => setGenerating(false),
         });
     }
 
@@ -78,6 +104,12 @@ export default function PayrollIndex({ payrolls, departments, filters, stats }: 
 
                 {flash?.success && (
                     <div className="rounded-md bg-green-50 border border-green-200 px-4 py-3 text-sm text-green-700">{flash.success}</div>
+                )}
+                {flash?.warning && (
+                    <div className="rounded-md bg-amber-50 border border-amber-200 px-4 py-3 text-sm text-amber-700">{flash.warning}</div>
+                )}
+                {flash?.error && (
+                    <div className="rounded-md bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">{flash.error}</div>
                 )}
 
                 {/* Stats */}
@@ -107,14 +139,14 @@ export default function PayrollIndex({ payrolls, departments, filters, stats }: 
                         value={filters.month_year ?? ''}
                         onChange={e => applyFilter('month_year', e.target.value)}
                     />
-                    <Select value={filters.department_id ?? ''} onValueChange={v => applyFilter('department_id', v)}>
+                    <Select value={filters.department_id ?? ''} onValueChange={v => applyFilter('department_id', v ?? '')}>
                         <SelectTrigger className="w-44"><SelectValue placeholder="All Departments" /></SelectTrigger>
                         <SelectContent>
                             <SelectItem value="">All Departments</SelectItem>
                             {departments.map(d => <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>)}
                         </SelectContent>
                     </Select>
-                    <Select value={filters.status ?? ''} onValueChange={v => applyFilter('status', v)}>
+                    <Select value={filters.status ?? ''} onValueChange={v => applyFilter('status', v ?? '')}>
                         <SelectTrigger className="w-36"><SelectValue placeholder="All Status" /></SelectTrigger>
                         <SelectContent>
                             <SelectItem value="">All Status</SelectItem>
@@ -183,11 +215,12 @@ export default function PayrollIndex({ payrolls, departments, filters, stats }: 
                     <div className="space-y-4 mt-2">
                         <div className="space-y-1.5">
                             <Label>Month <span className="text-red-500">*</span></Label>
-                            <Input type="month" value={genForm.month_year} onChange={e => setGenForm(p => ({ ...p, month_year: e.target.value }))} />
+                            <Input type="month" value={genForm.month_year} onChange={e => { setGenForm(p => ({ ...p, month_year: e.target.value })); setGenErrors(p => ({ ...p, month_year: undefined })); }} />
+                            {genErrors.month_year && <p className="text-xs text-red-500">{genErrors.month_year}</p>}
                         </div>
                         <div className="space-y-1.5">
                             <Label>Department (optional)</Label>
-                            <Select value={genForm.department_id} onValueChange={v => setGenForm(p => ({ ...p, department_id: v }))}>
+                            <Select value={genForm.department_id} onValueChange={v => setGenForm(p => ({ ...p, department_id: v ?? '' }))}>
                                 <SelectTrigger><SelectValue placeholder="All Departments" /></SelectTrigger>
                                 <SelectContent>
                                     <SelectItem value="">All Departments</SelectItem>
@@ -197,7 +230,8 @@ export default function PayrollIndex({ payrolls, departments, filters, stats }: 
                         </div>
                         <div className="space-y-1.5">
                             <Label>Working Days <span className="text-red-500">*</span></Label>
-                            <Input type="number" min="1" max="31" value={genForm.working_days} onChange={e => setGenForm(p => ({ ...p, working_days: e.target.value }))} />
+                            <Input type="number" min="1" max="31" value={genForm.working_days} onChange={e => { setGenForm(p => ({ ...p, working_days: e.target.value })); setGenErrors(p => ({ ...p, working_days: undefined })); }} />
+                            {genErrors.working_days && <p className="text-xs text-red-500">{genErrors.working_days}</p>}
                         </div>
                         <div className="rounded-lg bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
                             Net salary will be adjusted based on attendance records. Staff without a salary structure will be skipped.

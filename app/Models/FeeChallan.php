@@ -73,7 +73,12 @@ class FeeChallan extends Model
 
     public function getBillingPeriodLabelAttribute(): string
     {
-        // If billing_period_key is an explicit descriptive label (e.g. "Test Session 2026"), respect it directly
+        // If notes has an explicit descriptive label (e.g. "Sports Fund 2026"), respect it directly
+        if (! empty($this->notes)) {
+            return $this->notes;
+        }
+
+        // If billing_period_key is an explicit descriptive label (e.g. legacy "Test Session 2026"), respect it directly
         if (! empty($this->billing_period_key) && ! preg_match('/^AY\d+-\d{4}-\d{2}$/i', $this->billing_period_key) && ! preg_match('/^\d{4}-\d{2}$/', $this->billing_period_key)) {
             return $this->billing_period_key;
         }

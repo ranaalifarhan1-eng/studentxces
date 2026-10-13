@@ -53,6 +53,90 @@ class FeeBillingService
     }
 
     /**
+     * Generate the canonical billing_period_key for a given academic year and target month.
+     * Canonical format: AY{academicYearId}-YYYY-MM
+     */
+    public static function buildBillingPeriodKey(AcademicYear|int $academicYear, Carbon $targetMonth): string
+    {
+        $ayId = $academicYear instanceof AcademicYear ? $academicYear->id : $academicYear;
+
+        return "AY{$ayId}-" . $targetMonth->format('Y-m');
+    }
+
+    /**
+     * Generate the canonical active_period_key for deduplicating active challans per student and period.
+     */
+    public static function buildActivePeriodKey(int $studentId, string $billingPeriodKey): string
+    {
+        return "{$studentId}_{$billingPeriodKey}";
+    }
+
+    /**
+     * Generate the canonical active_charge_key for deduplicating active line items per student, structure, and period.
+     */
+    public static function buildActiveChargeKey(int $studentId, int $feeStructureId, string $chargePeriodKey): string
+    {
+        return "{$studentId}_{$feeStructureId}_{$chargePeriodKey}";
+    }
+
+    /**
+     * Authoritatively resolve the target billing month from payload parameters or dates.
+     */
+    public static function resolveTargetMonth(array $params = [], ?string $fallbackDate = null): Carbon
+    {
+        // 1. Explicit target_month / billing_month / month
+        if (! empty($params['target_month'])) {
+            return Carbon::parse($params['target_month'])->startOfMonth();
+        }
+        if (! empty($params['billing_month'])) {
+            return Carbon::parse($params['billing_month'])->startOfMonth();
+        }
+        if (! empty($params['month'])) {
+            return Carbon::parse($params['month'])->startOfMonth();
+        }
+
+        // 2. Check if billing_label, billing_period_key, or period contains a recognizable date pattern
+        $labelCandidates = array_filter([
+            $params['billing_label'] ?? null,
+            $params['billing_period_key'] ?? null,
+            $params['period'] ?? null,
+        ]);
+
+        foreach ($labelCandidates as $candidate) {
+            $candidate = trim((string) $candidate);
+            // Canonical AY{id}-YYYY-MM pattern
+            if (preg_match('/AY\d+-(\d{4})-(\d{2})/i', $candidate, $m)) {
+                return Carbon::createFromDate((int) $m[1], (int) $m[2], 1)->startOfMonth();
+            }
+            // YYYY-MM pattern
+            if (preg_match('/\b(\d{4})-(\d{2})\b/', $candidate, $m)) {
+                return Carbon::createFromDate((int) $m[1], (int) $m[2], 1)->startOfMonth();
+            }
+            // Month Name + Year (e.g. "October 2026", "Oct 2026")
+            if (preg_match('/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s+(\d{4})\b/i', $candidate, $m)) {
+                try {
+                    return Carbon::parse("{$m[1]} {$m[2]}")->startOfMonth();
+                } catch (\Throwable) {}
+            }
+        }
+
+        // 3. Fallback date (e.g. issue_date)
+        if (! empty($fallbackDate)) {
+            try {
+                return Carbon::parse($fallbackDate)->startOfMonth();
+            } catch (\Throwable) {}
+        }
+        if (! empty($params['issue_date'])) {
+            try {
+                return Carbon::parse($params['issue_date'])->startOfMonth();
+            } catch (\Throwable) {}
+        }
+
+        // 4. Default to current month
+        return Carbon::now()->startOfMonth();
+    }
+
+    /**
      * Generate the authoritative charge_period_key for a given structure and target month.
      */
     public static function buildChargePeriodKey(FeeStructure $structure, AcademicYear $year, Carbon $targetMonth): string
@@ -74,13 +158,41 @@ class FeeBillingService
     public static function isStructureEligible(FeeStructure $structure, Student $student, AcademicYear $year, Carbon $targetMonth): bool
     {
         $chargeKey = self::buildChargePeriodKey($structure, $year, $targetMonth);
+        $targetYear = (int) $targetMonth->format('Y');
+        $targetMonthNum = (int) $targetMonth->format('m');
+        $categoryName = $structure->feeCategory?->name;
 
-        // Check if an active (non-void) challan item with this charge key already exists for this student & structure
+        // Check if an active (non-void) challan item with this charge key (or matching legacy charge key) already exists
         $alreadyBilled = FeeChallanItem::where('school_id', $student->school_id)
             ->where('student_id', $student->id)
             ->where('fee_structure_id', $structure->id)
-            ->where('charge_period_key', $chargeKey)
             ->whereNotNull('active_charge_key')
+            ->where(function ($q) use ($chargeKey, $categoryName, $structure, $targetYear, $targetMonthNum) {
+                $q->where('charge_period_key', $chargeKey);
+
+                if (! empty($categoryName)) {
+                    if ($structure->frequency === 'one_time') {
+                        $q->orWhere('charge_period_key', $categoryName);
+                    } elseif ($structure->frequency === 'annual') {
+                        $q->orWhere(function ($sub) use ($categoryName, $targetYear) {
+                            $sub->where('charge_period_key', $categoryName)
+                                ->whereHas('feeChallan', function ($ch) use ($targetYear) {
+                                    $ch->where('status', '!=', 'void')
+                                       ->whereYear('issue_date', $targetYear);
+                                });
+                        });
+                    } else {
+                        $q->orWhere(function ($sub) use ($categoryName, $targetYear, $targetMonthNum) {
+                            $sub->where('charge_period_key', $categoryName)
+                                ->whereHas('feeChallan', function ($ch) use ($targetYear, $targetMonthNum) {
+                                    $ch->where('status', '!=', 'void')
+                                       ->whereYear('issue_date', $targetYear)
+                                       ->whereMonth('issue_date', $targetMonthNum);
+                                });
+                        });
+                    }
+                }
+            })
             ->exists();
 
         if ($alreadyBilled) {
@@ -100,8 +212,19 @@ class FeeBillingService
             return ! FeeChallanItem::where('school_id', $student->school_id)
                 ->where('student_id', $student->id)
                 ->where('fee_structure_id', $structure->id)
-                ->where('charge_period_key', $annualKey)
                 ->whereNotNull('active_charge_key')
+                ->where(function ($q) use ($annualKey, $categoryName, $targetYear) {
+                    $q->where('charge_period_key', $annualKey);
+                    if (! empty($categoryName)) {
+                        $q->orWhere(function ($sub) use ($categoryName, $targetYear) {
+                            $sub->where('charge_period_key', $categoryName)
+                                ->whereHas('feeChallan', function ($ch) use ($targetYear) {
+                                    $ch->where('status', '!=', 'void')
+                                       ->whereYear('issue_date', $targetYear);
+                                });
+                        });
+                    }
+                })
                 ->exists();
         }
 
@@ -110,8 +233,13 @@ class FeeBillingService
             return ! FeeChallanItem::where('school_id', $student->school_id)
                 ->where('student_id', $student->id)
                 ->where('fee_structure_id', $structure->id)
-                ->where('charge_period_key', 'ONETIME')
                 ->whereNotNull('active_charge_key')
+                ->where(function ($q) use ($categoryName) {
+                    $q->where('charge_period_key', 'ONETIME');
+                    if (! empty($categoryName)) {
+                        $q->orWhere('charge_period_key', $categoryName);
+                    }
+                })
                 ->exists();
         }
 
@@ -502,12 +630,25 @@ class FeeBillingService
             return null;
         }
 
-        $billingPeriodKey = "AY{$academicYear->id}-" . $targetMonth->format('Y-m');
-        $activePeriodKey = "{$student->id}_{$billingPeriodKey}";
+        $billingPeriodKey = self::buildBillingPeriodKey($academicYear, $targetMonth);
+        $activePeriodKey = self::buildActivePeriodKey($student->id, $billingPeriodKey);
 
-        // Prevent duplicate active challan
+        $targetYear = (int) $targetMonth->format('Y');
+        $targetMonthNum = (int) $targetMonth->format('m');
+
+        // Prevent duplicate active challan (canonical key OR legacy active challan for the same billing month)
         $exists = FeeChallan::where('school_id', $sid)
-            ->where('active_period_key', $activePeriodKey)
+            ->where('student_id', $student->id)
+            ->where('status', '!=', 'void')
+            ->where(function ($q) use ($activePeriodKey, $billingPeriodKey, $targetYear, $targetMonthNum) {
+                $q->where('active_period_key', $activePeriodKey)
+                  ->orWhere('billing_period_key', $billingPeriodKey)
+                  ->orWhere(function ($sub) use ($targetYear, $targetMonthNum) {
+                      $sub->whereYear('issue_date', $targetYear)
+                          ->whereMonth('issue_date', $targetMonthNum)
+                          ->whereNotNull('active_period_key');
+                  });
+            })
             ->exists();
 
         if ($exists) {
@@ -557,7 +698,7 @@ class FeeBillingService
                 ]);
 
                 foreach ($prepared['lines'] as $line) {
-                    $activeChargeKey = "{$student->id}_{$line['fee_structure_id']}_{$line['charge_period_key']}";
+                    $activeChargeKey = self::buildActiveChargeKey($student->id, $line['fee_structure_id'], $line['charge_period_key']);
 
                     FeeChallanItem::create([
                         'fee_challan_id'    => $challan->id,

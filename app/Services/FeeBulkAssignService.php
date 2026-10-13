@@ -100,6 +100,12 @@ class FeeBulkAssignService
         $billingLabel = trim($params['billing_label'] ?? $structure->feeCategory?->name ?? 'Fee Voucher');
         $executionMode = $params['execution_mode'] ?? 'assign_and_bill';
 
+        $targetMonth = FeeBillingService::resolveTargetMonth($params, $params['issue_date'] ?? null);
+        $canonicalBillingPeriodKey = FeeBillingService::buildBillingPeriodKey($academicYear, $targetMonth);
+        $canonicalChargePeriodKey = FeeBillingService::buildChargePeriodKey($structure, $academicYear, $targetMonth);
+        $targetYear = (int) $targetMonth->format('Y');
+        $targetMonthNum = (int) $targetMonth->format('m');
+
         // Query all students in this class matching selection
         $students = self::resolveTargetStudents($schoolId, $classId, $params);
 
@@ -111,19 +117,49 @@ class FeeBulkAssignService
             ->get()
             ->keyBy('student_id');
 
-        // Fetch existing challans/items for this billing label
+        // Fetch existing challans for canonical period key OR legacy billing label within the same billing month
         $existingChallans = FeeChallan::where('school_id', $schoolId)
-            ->where('billing_period_key', $billingLabel)
-            ->where('status', '!=', 'void')
             ->whereIn('student_id', $students->pluck('id'))
+            ->where('status', '!=', 'void')
+            ->where(function ($q) use ($canonicalBillingPeriodKey, $billingLabel, $targetYear, $targetMonthNum) {
+                $q->where('billing_period_key', $canonicalBillingPeriodKey)
+                  ->orWhere(function ($sub) use ($billingLabel, $targetYear, $targetMonthNum) {
+                      $sub->where('billing_period_key', $billingLabel)
+                          ->whereYear('issue_date', $targetYear)
+                          ->whereMonth('issue_date', $targetMonthNum);
+                  });
+            })
             ->get()
             ->keyBy('student_id');
 
         $existingItems = FeeChallanItem::where('school_id', $schoolId)
             ->where('fee_structure_id', $structure->id)
-            ->where('charge_period_key', $billingLabel)
             ->whereNotNull('active_charge_key')
             ->whereIn('student_id', $students->pluck('id'))
+            ->where(function ($q) use ($canonicalChargePeriodKey, $billingLabel, $structure, $targetYear, $targetMonthNum) {
+                $q->where('charge_period_key', $canonicalChargePeriodKey);
+
+                if ($structure->frequency === 'one_time') {
+                    $q->orWhere('charge_period_key', $billingLabel);
+                } elseif ($structure->frequency === 'annual') {
+                    $q->orWhere(function ($sub) use ($billingLabel, $targetYear) {
+                        $sub->where('charge_period_key', $billingLabel)
+                            ->whereHas('feeChallan', function ($ch) use ($targetYear) {
+                                $ch->where('status', '!=', 'void')
+                                   ->whereYear('issue_date', $targetYear);
+                            });
+                    });
+                } else {
+                    $q->orWhere(function ($sub) use ($billingLabel, $targetYear, $targetMonthNum) {
+                        $sub->where('charge_period_key', $billingLabel)
+                            ->whereHas('feeChallan', function ($ch) use ($targetYear, $targetMonthNum) {
+                                $ch->where('status', '!=', 'void')
+                                   ->whereYear('issue_date', $targetYear)
+                                   ->whereMonth('issue_date', $targetMonthNum);
+                            });
+                    });
+                }
+            })
             ->get()
             ->keyBy('student_id');
 
@@ -260,6 +296,12 @@ class FeeBulkAssignService
         $notifyStudent = (bool) ($payload['notify_student'] ?? false);
         $notifyGuardian = (bool) ($payload['notify_guardian'] ?? false);
 
+        $targetMonth = FeeBillingService::resolveTargetMonth($payload, $issueDate);
+        $canonicalBillingPeriodKey = FeeBillingService::buildBillingPeriodKey($academicYear, $targetMonth);
+        $canonicalChargePeriodKey = FeeBillingService::buildChargePeriodKey($structure, $academicYear, $targetMonth);
+        $targetYear = (int) $targetMonth->format('Y');
+        $targetMonthNum = (int) $targetMonth->format('m');
+
         $students = self::resolveTargetStudents($schoolId, $classId, $payload);
 
         $assignedBy = $user?->id;
@@ -309,23 +351,53 @@ class FeeBulkAssignService
 
                 // 2. Voucher Generation (if mode is assign_and_bill)
                 if ($executionMode === 'assign_and_bill') {
-                    $activePeriodKey = "{$student->id}_{$billingLabel}";
-                    $activeChargeKey = "{$student->id}_{$structure->id}_{$billingLabel}";
+                    $activePeriodKey = FeeBillingService::buildActivePeriodKey($student->id, $canonicalBillingPeriodKey);
+                    $activeChargeKey = FeeBillingService::buildActiveChargeKey($student->id, $structure->id, $canonicalChargePeriodKey);
 
-                    // Check idempotency for challan and item
+                    // Check idempotency for challan (canonical key OR legacy label within the same billing month)
                     $existingChallan = FeeChallan::where('school_id', $schoolId)
-                        ->where(function ($q) use ($activePeriodKey, $student, $billingLabel) {
+                        ->where('student_id', $student->id)
+                        ->where('status', '!=', 'void')
+                        ->where(function ($q) use ($activePeriodKey, $canonicalBillingPeriodKey, $billingLabel, $targetYear, $targetMonthNum) {
                             $q->where('active_period_key', $activePeriodKey)
-                              ->orWhere(function ($sub) use ($student, $billingLabel) {
-                                  $sub->where('student_id', $student->id)
-                                      ->where('billing_period_key', $billingLabel)
-                                      ->where('status', '!=', 'void');
+                              ->orWhere('billing_period_key', $canonicalBillingPeriodKey)
+                              ->orWhere(function ($sub) use ($billingLabel, $targetYear, $targetMonthNum) {
+                                  $sub->where('billing_period_key', $billingLabel)
+                                      ->whereYear('issue_date', $targetYear)
+                                      ->whereMonth('issue_date', $targetMonthNum);
                               });
                         })->first();
 
+                    // Check idempotency for item (canonical charge key OR legacy charge key within the same billing month)
                     $existingItem = FeeChallanItem::where('school_id', $schoolId)
-                        ->where('active_charge_key', $activeChargeKey)
-                        ->first();
+                        ->where('student_id', $student->id)
+                        ->where('fee_structure_id', $structure->id)
+                        ->whereNotNull('active_charge_key')
+                        ->where(function ($q) use ($activeChargeKey, $canonicalChargePeriodKey, $billingLabel, $structure, $targetYear, $targetMonthNum) {
+                            $q->where('active_charge_key', $activeChargeKey)
+                              ->orWhere('charge_period_key', $canonicalChargePeriodKey);
+
+                            if ($structure->frequency === 'one_time') {
+                                $q->orWhere('charge_period_key', $billingLabel);
+                            } elseif ($structure->frequency === 'annual') {
+                                $q->orWhere(function ($sub) use ($billingLabel, $targetYear) {
+                                    $sub->where('charge_period_key', $billingLabel)
+                                        ->whereHas('feeChallan', function ($ch) use ($targetYear) {
+                                            $ch->where('status', '!=', 'void')
+                                               ->whereYear('issue_date', $targetYear);
+                                        });
+                                });
+                            } else {
+                                $q->orWhere(function ($sub) use ($billingLabel, $targetYear, $targetMonthNum) {
+                                    $sub->where('charge_period_key', $billingLabel)
+                                        ->whereHas('feeChallan', function ($ch) use ($targetYear, $targetMonthNum) {
+                                            $ch->where('status', '!=', 'void')
+                                               ->whereYear('issue_date', $targetYear)
+                                               ->whereMonth('issue_date', $targetMonthNum);
+                                        });
+                                });
+                            }
+                        })->first();
 
                     if ($existingChallan || $existingItem) {
                         $alreadyBilled++;
@@ -345,49 +417,58 @@ class FeeBulkAssignService
                     $discountCents = min($discountCents, $structureGrossCents);
                     $netCents = max(0, $structureGrossCents - $discountCents);
 
-                    $challanNo = DocumentSequenceService::nextNumber($schoolId, 'challan', 'CHL', Carbon::now()->year);
+                    $challanNo = DocumentSequenceService::nextNumber($schoolId, 'challan', 'CHL', (int) $targetMonth->format('Y'));
                     $prevDebtCents = FeeBillingService::computePreviousOutstandingCents($student);
 
-                    $challan = FeeChallan::create([
-                        'school_id'                     => $schoolId,
-                        'challan_no'                    => $challanNo,
-                        'billing_period_key'            => $billingLabel,
-                        'active_period_key'             => $activePeriodKey,
-                        'student_id'                    => $student->id,
-                        'class_id'                      => $student->class_id,
-                        'section_id'                    => $student->section_id,
-                        'academic_year_id'              => $academicYear->id,
-                        'student_name'                  => $student->full_name,
-                        'admission_no'                  => $student->admission_no,
-                        'class_name'                    => $student->schoolClass?->name,
-                        'section_name'                  => $student->section?->name,
-                        'academic_year_name'            => $academicYear->name,
-                        'issue_date'                    => $issueDate,
-                        'due_date'                      => $dueDate->toDateString(),
-                        'issued_at'                     => now(),
-                        'gross_amount'                  => Money::toDecimal($structureGrossCents),
-                        'discount_amount'               => Money::toDecimal($discountCents),
-                        'discount_title'                => $discount?->title,
-                        'fine_amount'                   => '0.00',
-                        'total_payable'                 => Money::toDecimal($netCents),
-                        'paid_amount'                   => '0.00',
-                        'previous_outstanding_snapshot' => Money::toDecimal($prevDebtCents),
-                        'status'                        => 'unpaid',
-                        'notes'                         => $billingLabel,
-                    ]);
+                    try {
+                        $challan = FeeChallan::create([
+                            'school_id'                     => $schoolId,
+                            'challan_no'                    => $challanNo,
+                            'billing_period_key'            => $canonicalBillingPeriodKey,
+                            'active_period_key'             => $activePeriodKey,
+                            'student_id'                    => $student->id,
+                            'class_id'                      => $student->class_id,
+                            'section_id'                    => $student->section_id,
+                            'academic_year_id'              => $academicYear->id,
+                            'student_name'                  => $student->full_name,
+                            'admission_no'                  => $student->admission_no,
+                            'class_name'                    => $student->schoolClass?->name,
+                            'section_name'                  => $student->section?->name,
+                            'academic_year_name'            => $academicYear->name,
+                            'issue_date'                    => $issueDate,
+                            'due_date'                      => $dueDate->toDateString(),
+                            'issued_at'                     => now(),
+                            'gross_amount'                  => Money::toDecimal($structureGrossCents),
+                            'discount_amount'               => Money::toDecimal($discountCents),
+                            'discount_title'                => $discount?->title,
+                            'fine_amount'                   => '0.00',
+                            'total_payable'                 => Money::toDecimal($netCents),
+                            'paid_amount'                   => '0.00',
+                            'previous_outstanding_snapshot' => Money::toDecimal($prevDebtCents),
+                            'status'                        => 'unpaid',
+                            'notes'                         => $billingLabel,
+                        ]);
 
-                    FeeChallanItem::create([
-                        'school_id'          => $schoolId,
-                        'student_id'         => $student->id,
-                        'fee_challan_id'     => $challan->id,
-                        'fee_structure_id'   => $structure->id,
-                        'charge_period_key'  => $billingLabel,
-                        'active_charge_key'  => $activeChargeKey,
-                        'fee_head_name'      => $structure->feeCategory?->name ?? 'Fee Head',
-                        'gross_amount'       => Money::toDecimal($structureGrossCents),
-                        'discount_amount'    => Money::toDecimal($discountCents),
-                        'net_amount'         => Money::toDecimal($netCents),
-                    ]);
+                        FeeChallanItem::create([
+                            'school_id'          => $schoolId,
+                            'student_id'         => $student->id,
+                            'fee_challan_id'     => $challan->id,
+                            'fee_structure_id'   => $structure->id,
+                            'charge_period_key'  => $canonicalChargePeriodKey,
+                            'active_charge_key'  => $activeChargeKey,
+                            'fee_head_name'      => $structure->feeCategory?->name ?? 'Fee Head',
+                            'gross_amount'       => Money::toDecimal($structureGrossCents),
+                            'discount_amount'    => Money::toDecimal($discountCents),
+                            'net_amount'         => Money::toDecimal($netCents),
+                        ]);
+                    } catch (\Illuminate\Database\QueryException $e) {
+                        if (FeeBillingService::isUniqueConstraintViolation($e)) {
+                            // Race condition duplicate rejected by unique constraint uq_school_active_period or uq_school_active_charge_key
+                            $alreadyBilled++;
+                            continue;
+                        }
+                        throw $e;
+                    }
 
                     $vouchersGenerated++;
                     $createdChallans[] = [

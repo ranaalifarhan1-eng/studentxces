@@ -3,6 +3,31 @@
 All meaningful product changes, enhancements, fixes and production releases
 are recorded here.
 
+## [2026-10-13 16:55 PKT] — Permanent Cross-Workflow Fee Idempotency Fix
+
+**Module:** Fees & Admissions / Multi-Tenancy / Idempotency<br>
+**Status:** Committed<br>
+**Commit:** Pending
+
+### Fixed
+- **Cross-Workflow Fee Billing Idempotency Divergence:**
+  - Resolved root cause where admission voucher generation generated canonical key `billing_period_key = 'AY{id}-YYYY-MM'` while bulk fee assign workflow generated free-form string `billing_period_key = 'Tuition Fee'` / `billing_label`.
+  - The diverging keys previously bypassed both application deduplication checks and database-level unique constraints (`uq_school_active_period` on `['school_id', 'active_period_key']` and `uq_school_active_charge_key` on `['school_id', 'active_charge_key']`), allowing duplicate active vouchers to be issued to the same student for the same month.
+
+### Enhanced
+- **Unified Canonical Key Specification Across All Billing Workflows:**
+  - Enforced `FeeBillingService::buildBillingPeriodKey($academicYear, $targetMonth)` -> `AY{academicYearId}-YYYY-MM` across admission vouchers, bulk assign & bill (`FeeBulkAssignService`), and monthly billing (`FeeBillingService`).
+  - Enforced `FeeBillingService::buildChargePeriodKey($structure, $academicYear, $targetMonth)` -> `AY{academicYearId}-{freq}-YYYY-MM` (or `AY{academicYearId}-ANNUAL` / `ONETIME`) as line-item charge key.
+  - Enforced `FeeBillingService::buildActivePeriodKey($studentId, $billingPeriodKey)` -> `{studentId}_{billingPeriodKey}` for active challan uniqueness.
+  - Enforced `FeeBillingService::buildActiveChargeKey($studentId, $structureId, $chargePeriodKey)` -> `{studentId}_{structureId}_{chargePeriodKey}` for active line-item uniqueness.
+  - Preserved human-readable display labels (`billing_label`, e.g. "Sports Fund 2026") strictly in `FeeChallan.notes` and `FeeChallan.billing_period_label` without altering the canonical key.
+  - Updated `FeeBulkAssignService::preview` and `FeeBulkAssignService::execute` to query both canonical keys and legacy labels for zero-regression historical record compatibility.
+  - Added race-condition safe database exception handling via `FeeBillingService::isUniqueConstraintViolation` to prevent 500 errors during concurrent billing runs.
+
+### Added
+- **Deterministic Cross-Workflow Idempotency Test Suite (`FeeCrossWorkflowIdempotencyTest.php`):**
+  - 9 automated tests (68 assertions) covering: admission first then bulk assign duplicate blocking; bulk first then admission duplicate blocking; sequential billing preservation (Sep + Oct, Oct + Nov); multi-tenant isolation; multi-structure unified billing; concession invariance on keys; label invariance; and historical legacy record compatibility with cross-month isolation.
+
 ## [2026-10-12 21:30 PKT] — Safe Subject Deletion Pilot & RBAC Permission Architecture
 
 **Module:** Academics / RBAC / Multi-Tenancy<br>

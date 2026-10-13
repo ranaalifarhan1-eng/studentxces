@@ -530,11 +530,13 @@ class FeeBulkWorkflowTest extends TestCase
             ]);
 
         $challan = FeeChallan::where('student_id', $this->student1->id)->firstOrFail();
-        $this->assertEquals('Sports Fund 2026', $challan->billing_period_key);
+        $expectedCanonicalKey = "AY{$this->academicYear->id}-" . now()->format('Y-m');
+        $this->assertEquals($expectedCanonicalKey, $challan->billing_period_key);
+        $this->assertEquals('Sports Fund 2026', $challan->notes);
         $this->assertEquals('Sports Fund 2026', $challan->billing_period_label);
 
         $item = FeeChallanItem::where('fee_challan_id', $challan->id)->firstOrFail();
-        $this->assertEquals('Sports Fund 2026', $item->charge_period_key);
+        $this->assertEquals('ONETIME', $item->charge_period_key);
     }
 
     public function test_notification_with_mail_fake_dispatches_for_student_only(): void
@@ -753,7 +755,8 @@ class FeeBulkWorkflowTest extends TestCase
         $this->assertDatabaseHas('fee_challans', [
             'school_id'          => $this->school->id,
             'student_id'         => $this->student1->id,
-            'billing_period_key' => 'Test Session 2026',
+            'billing_period_key' => "AY{$this->academicYear->id}-" . now()->format('Y-m'),
+            'notes'              => 'Test Session 2026',
         ]);
     }
 

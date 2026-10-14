@@ -28,6 +28,35 @@ are recorded here.
 - **Deterministic Cross-Workflow Idempotency Test Suite (`FeeCrossWorkflowIdempotencyTest.php`):**
   - 9 automated tests (68 assertions) covering: admission first then bulk assign duplicate blocking; bulk first then admission duplicate blocking; sequential billing preservation (Sep + Oct, Oct + Nov); multi-tenant isolation; multi-structure unified billing; concession invariance on keys; label invariance; and historical legacy record compatibility with cross-month isolation.
 
+## [2026-10-13 01:00 PKT] — Canonical Finance Metrics & UX Consistency (Phase 2A)
+
+**Module:** Fees & Finance / Reporting / Multi-Tenancy<br>
+**Status:** Local / Uncommitted<br>
+**Commit:** Pending
+
+### Added
+- **Canonical Financial Summary Service (`FeeFinancialSummaryService.php`):**
+  - Centralized single source of truth for financial metrics aggregation across the application.
+  - Implemented exact integer-cents arithmetic via `App\Support\Money` (`lifetimeCollectedCents`, `collectedBetweenCents`, `currentMonthCollectedCents`, `todayCollectedCents`, `modernOutstandingCents`, `legacyOutstandingCents`, `currentOutstandingCents`, `totalAdjustmentsCents`).
+  - Added tenant school-timezone resolution (`resolveSchoolTimezone`, `getSchoolNow`, `isValidTimezone`) prioritizing school's configured IANA timezone, application config (`config('app.timezone')`), and safe fallback (`'UTC'`) without hardcoding `Asia/Karachi`.
+  - Added single-query grouped aggregators for monthly trend (`monthlyCollectionsSeries`) and daily collections (`dailyCollectionsSeries`) without N+1 loops or floating-point drift.
+  - Provided unified convenience aggregation methods for fee management, admin dashboard, accountant dashboard, and finance report.
+- **Comprehensive Automated Test Suites (20 tests, 217 assertions):**
+  - `SchoolAdminDashboardFinancialMetricsTest.php` (6 tests): verifies current-month cash collections, snapshot outstanding obligations, 6-month chart precision, accountant today collection, school-timezone calendar boundary resolution (e.g. Asia/Tokyo vs America/New_York across UTC midnight), and invalid/fallback timezone graceful handling.
+  - `FinanceReportMetricsTest.php` (4 tests): verifies date-filtered cash collection scopes, point-in-time snapshot outstanding invariance across date filters, daily chart aggregation, and multi-tenant isolation.
+  - `FeeManagementStatsReconciliationTest.php` (10 tests): verifies full lifecycle obligations (paid, partial, unpaid), strict exclusion of voided challans from outstanding, non-cash adjustments accounting integrity, legacy fee formula reconciliation, installment balance snapshot persistence, deterministic 10k - 2k adjustment - 3k payment accounting semantics audit, adjustment-only challan, fully-adjusted challan settlement, voided adjusted challan zero outstanding, and receipt balance modern vs legacy contract.
+
+### Enhanced
+- **Clarified Finance Temporal Metric Scopes & UI Labels:**
+  - `Dashboard.tsx`: Unified Admin and Super Admin cards to "This Month Collections" (retiring ambiguous "Total Revenue" and "This Month Fee") to eliminate label-to-metric ambiguity.
+  - `Payments.tsx`: Renamed summary card from "Total Collected" to "Lifetime Collections" to clearly distinguish lifetime school receipts from monthly metrics.
+  - `Payments.tsx`: Redesigned Payments/Receipts table balance column from computed row formula to "Balance After Payment", displaying canonical `balance_snapshot` recorded at transaction time (with legacy fallback) and an informational tooltip explaining non-additive snapshot semantics.
+  - `Finance.tsx`: Renamed KPI cards to "Collected (Selected Period)" and "Current Outstanding", adding an informational tooltip clarifying that outstanding balance represents active school-wide obligations unaffected by the selected date filter.
+- **Controller Refactoring & Float Elimination:**
+  - `FeePaymentController::getStats`: Delegated entirely to `FeeFinancialSummaryService::getFeeManagementStats`.
+  - `ReportController::adminDashboard` & `accountantDashboard`: Delegated financial KPIs and charts to `FeeFinancialSummaryService`.
+  - `ReportController::finance`: Delegated date-filtered collections and point-in-time outstanding balance to `FeeFinancialSummaryService`.
+
 ## [2026-10-12 21:30 PKT] — Safe Subject Deletion Pilot & RBAC Permission Architecture
 
 **Module:** Academics / RBAC / Multi-Tenancy<br>

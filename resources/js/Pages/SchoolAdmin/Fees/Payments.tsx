@@ -9,8 +9,9 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Card, CardContent } from '@/components/ui/card';
 import {
     Plus, AlertCircle, Settings2, Tag, DollarSign, TrendingDown,
-    CheckCircle2, Clock, Search, FileText, ExternalLink, Receipt as ReceiptIcon, X
+    CheckCircle2, Clock, Search, FileText, ExternalLink, Receipt as ReceiptIcon, X, Info
 } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useCurrency } from '@/lib/currency';
 import type { SchoolClass } from '@/Types';
 
@@ -51,6 +52,9 @@ interface Payment {
     amount_paid: string;
     discount: string;
     fine: string;
+    fee_challan_id?: number | null;
+    balance_snapshot?: string | null;
+    balance?: string | null;
     status: 'paid' | 'partial' | 'unpaid' | 'overdue';
     method: string;
     payment_date: string | null;
@@ -107,7 +111,7 @@ export default function FeePayments({ activeTab = 'challans', challans, payments
     const currentTab = (filters.tab as 'challans' | 'payments') || activeTab;
     const [searchTerm, setSearchTerm] = useState(filters.search || '');
 
-    function applyFilter(key: string, value: string) {
+    function applyFilter(key: string, value: string | null | undefined) {
         router.get('/school/fees/payments', {
             ...filters,
             tab: currentTab,
@@ -136,7 +140,7 @@ export default function FeePayments({ activeTab = 'challans', challans, payments
     const paymentTotal = payments.total ?? payments.meta?.total ?? payments.data.length;
 
     const statCards = [
-        { label: 'Total Collected', value: formatMoney(stats.total_collected ?? 0), color: 'text-green-600', icon: DollarSign },
+        { label: 'Lifetime Collections', value: formatMoney(stats.total_collected ?? 0), color: 'text-green-600', icon: DollarSign },
         { label: 'Outstanding', value: formatMoney(Math.max(0, stats.total_outstanding ?? 0)), color: 'text-red-600', icon: TrendingDown },
         { label: 'Total Adjustments', value: formatMoney(stats.total_adjustments ?? 0), color: 'text-indigo-600', icon: Tag },
         { label: 'Paid Receipts', value: stats.paid_count, color: 'text-indigo-600', icon: CheckCircle2 },
@@ -408,7 +412,21 @@ export default function FeePayments({ activeTab = 'challans', challans, payments
                                     <TableHead>Fee Type</TableHead>
                                     <TableHead className="text-right">Due</TableHead>
                                     <TableHead className="text-right">Paid</TableHead>
-                                    <TableHead className="text-right">Balance</TableHead>
+                                    <TableHead className="text-right">
+                                        <div className="inline-flex items-center justify-end gap-1">
+                                            <span>Balance After Payment</span>
+                                            <TooltipProvider delay={100}>
+                                                <Tooltip>
+                                                    <TooltipTrigger className="cursor-help text-slate-400 hover:text-slate-600 focus:outline-none inline-flex items-center" aria-label="Balance snapshot explanation">
+                                                        <Info className="w-3.5 h-3.5" />
+                                                    </TooltipTrigger>
+                                                    <TooltipContent className="max-w-xs text-xs text-left">
+                                                        Balance recorded on the obligation immediately after this payment was applied. Non-additive across payment rows.
+                                                    </TooltipContent>
+                                                </Tooltip>
+                                            </TooltipProvider>
+                                        </div>
+                                    </TableHead>
                                     <TableHead>Method</TableHead>
                                     <TableHead>Date</TableHead>
                                     <TableHead>Status</TableHead>
@@ -424,8 +442,22 @@ export default function FeePayments({ activeTab = 'challans', challans, payments
                                     </TableRow>
                                 ) : (
                                     payments.data.map((p, idx) => {
-                                        const netDue = Number(p.amount_due) + Number(p.fine) - Number(p.discount);
-                                        const balance = Math.max(0, netDue - Number(p.amount_paid));
+                                        const isModern = Boolean(p.fee_challan_id || p.fee_challan);
+                                        const hasSnapshot = p.balance_snapshot !== null && p.balance_snapshot !== undefined && p.balance_snapshot !== '';
+                                        let balanceVal: number | null = null;
+
+                                        if (isModern) {
+                                            // Modern linked payments: strictly use balance_snapshot or '—' if missing
+                                            balanceVal = hasSnapshot ? Number(p.balance_snapshot) : null;
+                                        } else {
+                                            // Legacy standalone payments (where fee_challan_id is null)
+                                            if (hasSnapshot) {
+                                                balanceVal = Number(p.balance_snapshot);
+                                            } else {
+                                                const netDue = Number(p.amount_due || 0) + Number(p.fine || 0) - Number(p.discount || 0);
+                                                balanceVal = Math.max(0, netDue - Number(p.amount_paid || 0));
+                                            }
+                                        }
                                         return (
                                             <TableRow key={p.id}>
                                                 <TableCell className="text-slate-400 text-xs">{idx + 1}</TableCell>
@@ -442,8 +474,8 @@ export default function FeePayments({ activeTab = 'challans', challans, payments
                                                 </TableCell>
                                                 <TableCell className="text-right text-sm">{formatMoney(p.amount_due)}</TableCell>
                                                 <TableCell className="text-right text-sm font-semibold text-emerald-600">{formatMoney(p.amount_paid)}</TableCell>
-                                                <TableCell className={`text-right text-sm font-medium ${Number(balance) > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                                                    {Number(balance) > 0 ? formatMoney(balance) : '—'}
+                                                <TableCell className={`text-right text-sm font-medium ${balanceVal !== null && balanceVal > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                                                    {balanceVal !== null ? formatMoney(balanceVal) : '—'}
                                                 </TableCell>
                                                 <TableCell className="text-xs text-slate-500">{METHOD_LABELS[p.method] ?? p.method}</TableCell>
                                                 <TableCell className="text-xs text-slate-500">

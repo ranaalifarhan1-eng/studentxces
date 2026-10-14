@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ArrowLeft, Search, User, DollarSign, FileText, CheckCircle2, PlusCircle, Percent, AlertCircle, X, ShieldAlert } from 'lucide-react';
 import { useCurrency } from '@/lib/currency';
+import { getSchoolToday } from '@/lib/school-date';
 import type { SchoolClass, PageProps } from '@/Types';
 
 interface Student {
@@ -113,8 +114,10 @@ export default function CollectFee({
     idempotencyKey = '',
     canAdjust = false,
 }: Props) {
-    const { flash } = usePage<PageProps>().props;
+    const pageProps = usePage().props as any;
+    const { flash } = pageProps;
     const { currency, format: formatMoney } = useCurrency();
+    const defaultPaymentDate = getSchoolToday(pageProps);
     const [searchInput, setSearchInput] = useState(searchQuery);
 
     const initialChallan = activeChallans.find(c => String(c.id) === String(selectedChallanId))
@@ -166,7 +169,7 @@ export default function CollectFee({
         fee_challan_id:   initialChallan ? String(initialChallan.id) : '',
         fee_structure_id: '',
         amount_paid:      currentBalance > 0 ? String(currentBalance.toFixed(2)) : '',
-        payment_date:     new Date().toISOString().split('T')[0],
+        payment_date:     defaultPaymentDate,
         method:           'cash',
         reference:        '',
         note:             '',
@@ -333,7 +336,7 @@ export default function CollectFee({
                                     {activeChallans.length > 0 ? (
                                         <div className="space-y-1.5">
                                             <Label>Select Active Challan / Obligation <span className="text-red-500">*</span></Label>
-                                            <Select value={data.fee_challan_id} onValueChange={onChallanSelect}>
+                                            <Select value={data.fee_challan_id} onValueChange={(val) => onChallanSelect(val ?? '')}>
                                                 <SelectTrigger><SelectValue placeholder="Select challan" /></SelectTrigger>
                                                 <SelectContent>
                                                     {activeChallans.map(c => {
@@ -481,7 +484,7 @@ export default function CollectFee({
 
                                                 <div className="space-y-1.5">
                                                     <Label>Payment Method <span className="text-red-500">*</span></Label>
-                                                    <Select value={data.method} onValueChange={v => setData('method', v)}>
+                                                    <Select value={data.method} onValueChange={v => setData('method', v ?? 'cash')}>
                                                         <SelectTrigger><SelectValue /></SelectTrigger>
                                                         <SelectContent>
                                                             <SelectItem value="cash">Cash</SelectItem>
@@ -626,7 +629,7 @@ export default function CollectFee({
                                 <div className="grid grid-cols-2 gap-3">
                                     <div className="space-y-1">
                                         <Label className="text-xs">Adjustment Type <span className="text-red-500">*</span></Label>
-                                        <Select value={adjType} onValueChange={(v: 'fixed' | 'percentage') => setAdjType(v)}>
+                                        <Select value={adjType} onValueChange={(v) => { if (v === 'fixed' || v === 'percentage') setAdjType(v); }}>
                                             <SelectTrigger className="text-xs"><SelectValue /></SelectTrigger>
                                             <SelectContent>
                                                 <SelectItem value="fixed">Fixed Amount (PKR)</SelectItem>
@@ -655,7 +658,7 @@ export default function CollectFee({
                                 {/* Reason / Category */}
                                 <div className="space-y-1">
                                     <Label className="text-xs">Reason / Category <span className="text-red-500">*</span></Label>
-                                    <Select value={adjReason} onValueChange={setAdjReason}>
+                                    <Select value={adjReason} onValueChange={(v) => setAdjReason(v ?? 'Special Management Discount')}>
                                         <SelectTrigger className="text-xs"><SelectValue /></SelectTrigger>
                                         <SelectContent>
                                             <SelectItem value="Special Management Discount">Special Management Discount</SelectItem>

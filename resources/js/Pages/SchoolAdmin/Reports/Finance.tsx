@@ -8,7 +8,8 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { Download, Filter, TrendingUp, AlertCircle, DollarSign } from 'lucide-react';
+import { Download, Filter, TrendingUp, AlertCircle, DollarSign, Info } from 'lucide-react';
+import { Tooltip as UiTooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { useCurrency } from '@/lib/currency';
 
 interface Payment {
@@ -77,7 +78,7 @@ export default function FinanceReport({ collected, outstanding, payroll, dailyCh
                         <CardContent className="pt-5 pb-5">
                             <div className="flex items-center justify-between">
                                 <div>
-                                    <p className="text-sm text-slate-500">Collected (Period)</p>
+                                    <p className="text-sm text-slate-500">Collected (Selected Period)</p>
                                     <p className="text-2xl font-bold mt-1 text-green-600">{formatMoney(collected, 2)}</p>
                                 </div>
                                 <div className="p-3 rounded-xl bg-green-500"><TrendingUp className="w-6 h-6 text-white" /></div>
@@ -88,7 +89,19 @@ export default function FinanceReport({ collected, outstanding, payroll, dailyCh
                         <CardContent className="pt-5 pb-5">
                             <div className="flex items-center justify-between">
                                 <div>
-                                    <p className="text-sm text-slate-500">Outstanding</p>
+                                    <div className="flex items-center gap-1.5">
+                                        <p className="text-sm text-slate-500">Current Outstanding</p>
+                                        <TooltipProvider delay={100}>
+                                            <UiTooltip>
+                                                <TooltipTrigger className="cursor-help text-slate-400 hover:text-slate-600 focus:outline-none inline-flex items-center" aria-label="Outstanding explanation">
+                                                    <Info className="w-3.5 h-3.5" />
+                                                </TooltipTrigger>
+                                                <TooltipContent className="max-w-xs text-xs">
+                                                    Current unpaid balance across the school; not limited by the selected date range.
+                                                </TooltipContent>
+                                            </UiTooltip>
+                                        </TooltipProvider>
+                                    </div>
                                     <p className="text-2xl font-bold mt-1 text-orange-500">{formatMoney(outstanding, 2)}</p>
                                 </div>
                                 <div className="p-3 rounded-xl bg-orange-500"><AlertCircle className="w-6 h-6 text-white" /></div>
@@ -124,7 +137,7 @@ export default function FinanceReport({ collected, outstanding, payroll, dailyCh
                                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                                     <XAxis dataKey="day" tick={{ fontSize: 11 }} />
                                     <YAxis tick={{ fontSize: 11 }} />
-                                    <Tooltip formatter={(v: number) => [formatMoney(v, 2), 'Collected']} />
+                                    <Tooltip formatter={(v: any) => [formatMoney(Number(v) || 0, 2), 'Collected']} />
                                     <Area type="monotone" dataKey="amount" stroke="#6366f1" fill="url(#colorFee)" strokeWidth={2} isAnimationActive={false} />
                                 </AreaChart>
                             </ResponsiveContainer>

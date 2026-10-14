@@ -486,40 +486,6 @@ class FeePaymentController extends Controller
 
     private function getStats(int $sid): array
     {
-        // 1. Total collected (all FeePayment rows represent real received money)
-        $totalCollected = FeePayment::where('school_id', $sid)->sum('amount_paid');
-        $totalCollectedCents = Money::toCents($totalCollected);
-
-        // 2. Modern Challan outstanding
-        $modernOutstanding = FeeChallan::where('school_id', $sid)
-            ->whereIn('status', ['unpaid', 'partial'])
-            ->selectRaw('SUM(total_payable - paid_amount) as bal')
-            ->value('bal');
-        $modernOutstandingCents = Money::toCents($modernOutstanding);
-
-        // 3. Legacy payments outstanding (only where fee_challan_id is NULL)
-        $legacyOutstanding = FeePayment::where('school_id', $sid)
-            ->whereNull('fee_challan_id')
-            ->whereIn('status', ['pending', 'partial', 'overdue'])
-            ->selectRaw('SUM(amount_due + fine - discount - amount_paid) as bal')
-            ->value('bal');
-        $legacyOutstandingCents = Money::toCents($legacyOutstanding);
-
-        $totalOutstandingCents = max(0, $modernOutstandingCents + $legacyOutstandingCents);
-
-        $totalAdjustments = FeeChallan::where('school_id', $sid)->sum('adjustment_amount');
-        $totalAdjustmentsCents = Money::toCents($totalAdjustments);
-
-        $paidCount = FeePayment::where('school_id', $sid)->where('status', 'paid')->count();
-        $pendingCount = FeeChallan::where('school_id', $sid)->whereIn('status', ['unpaid', 'partial'])->count()
-            + FeePayment::where('school_id', $sid)->whereNull('fee_challan_id')->whereIn('status', ['pending', 'overdue'])->count();
-
-        return [
-            'total_collected'   => Money::toDecimal($totalCollectedCents),
-            'total_outstanding' => Money::toDecimal($totalOutstandingCents),
-            'total_adjustments' => Money::toDecimal($totalAdjustmentsCents),
-            'paid_count'        => $paidCount,
-            'pending_count'     => $pendingCount,
-        ];
+        return app(\App\Services\FeeFinancialSummaryService::class)->getFeeManagementStats($sid);
     }
 }

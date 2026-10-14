@@ -58,16 +58,16 @@ export default function Dashboard({ role, totalStudents, totalStaff, attendanceP
                 <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
                     {role === 'super-admin' ? (
                         <>
-                            <KpiCard title="Total Schools"   value={schools ?? 0}          icon={Users}        color="bg-indigo-500" />
-                            <KpiCard title="Total Students"  value={fmt(totalStudents)}     icon={Users}        color="bg-green-500" />
-                            <KpiCard title="Total Revenue"   value={formatMoney(monthFees)} icon={DollarSign}   color="bg-blue-500" />
+                            <KpiCard title="Total Schools"          value={schools ?? 0}          icon={Users}        color="bg-indigo-500" />
+                            <KpiCard title="Total Students"         value={fmt(totalStudents)}     icon={Users}        color="bg-green-500" />
+                            <KpiCard title="This Month Collections" value={formatMoney(monthFees)} icon={DollarSign}   color="bg-blue-500" />
                         </>
                     ) : (
                         <>
                             <KpiCard title="Total Students"  value={fmt(totalStudents)}     icon={Users}        color="bg-indigo-500" />
                             <KpiCard title="Active Staff"    value={fmt(totalStaff)}        icon={UserCog}      color="bg-violet-500" />
                             <KpiCard title="Today Attendance" value={`${attendancePct}%`}   icon={CalendarCheck} color="bg-green-500" />
-                            <KpiCard title="This Month Fees" value={formatMoney(monthFees)} icon={DollarSign}   color="bg-blue-500" />
+                            <KpiCard title="This Month Collections" value={formatMoney(monthFees)} icon={DollarSign}   color="bg-blue-500" />
                         </>
                     )}
                     <KpiCard title="Outstanding Fees"  value={formatMoney(pendingFees)}     icon={AlertCircle}  color="bg-orange-500" />
@@ -90,7 +90,7 @@ export default function Dashboard({ role, totalStudents, totalStaff, attendanceP
                                         <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                                         <XAxis dataKey="month" tick={{ fontSize: 12 }} />
                                         <YAxis tick={{ fontSize: 11 }} />
-                                        <Tooltip formatter={(v: number) => [formatMoney(v), 'Collected']} />
+                                        <Tooltip formatter={(v: any) => [formatMoney(Number(v) || 0), 'Collected']} />
                                         <Bar dataKey="amount" fill="#6366f1" radius={[4, 4, 0, 0]} isAnimationActive={false} />
                                     </BarChart>
                                 </ResponsiveContainer>

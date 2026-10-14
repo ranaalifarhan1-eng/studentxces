@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { ArrowLeft, CheckCircle2, AlertTriangle, Users, FileText, Send, RefreshCw, ExternalLink, ShieldCheck, Mail } from 'lucide-react';
 import { useCurrency } from '@/lib/currency';
+import { formatCalendarDate, getSchoolToday, resolveSchoolTimezone } from '@/lib/school-date';
 import type { SchoolClass, PageProps } from '@/Types';
 
 interface FeeCategory {
@@ -40,7 +41,7 @@ interface Section {
     name: string;
 }
 
-interface ClassWithSections extends SchoolClass {
+interface ClassWithSections extends Omit<SchoolClass, 'sections'> {
     sections?: Section[];
 }
 
@@ -136,7 +137,8 @@ export default function BulkAssign({
     preselectedStructureId,
     mailConfig,
 }: Props) {
-    const { flash } = usePage<PageProps & { bulkResult?: BulkExecutionResult }>().props;
+    const pageProps = usePage().props as any;
+    const { flash } = pageProps;
     const { format: formatMoney } = useCurrency();
 
     // 1. Structure Selection
@@ -174,7 +176,7 @@ export default function BulkAssign({
     const [executionMode, setExecutionMode] = useState<'assign_only' | 'assign_and_bill'>('assign_and_bill');
     const [billingLabel, setBillingLabel] = useState<string>('');
     const [dueDate, setDueDate] = useState<string>('');
-    const [issueDate, setIssueDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+    const [issueDate, setIssueDate] = useState<string>(() => getSchoolToday(pageProps));
     const [notifyStudent, setNotifyStudent] = useState<boolean>(false);
     const [notifyGuardian, setNotifyGuardian] = useState<boolean>(false);
 
@@ -208,7 +210,7 @@ export default function BulkAssign({
                 } else {
                     const defaultDue = new Date();
                     defaultDue.setDate(defaultDue.getDate() + 15);
-                    setDueDate(defaultDue.toISOString().split('T')[0]);
+                    setDueDate(formatCalendarDate(defaultDue, resolveSchoolTimezone(pageProps)));
                 }
             }
             // Reset preview when structure changes
@@ -419,7 +421,7 @@ export default function BulkAssign({
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div className="space-y-1.5">
                             <Label>Active Fee Structure <span className="text-red-500">*</span></Label>
-                            <Select value={selectedStructureId} onValueChange={setSelectedStructureId}>
+                            <Select value={selectedStructureId} onValueChange={(val) => setSelectedStructureId(val ?? '')}>
                                 <SelectTrigger>
                                     <SelectValue placeholder="Select fee structure">
                                         {activeStructure ? `${activeStructure.fee_category?.name} — ${activeStructure.school_class?.name} (${formatMoney(activeStructure.amount)})` : 'Select structure'}
@@ -437,7 +439,7 @@ export default function BulkAssign({
 
                         <div className="space-y-1.5">
                             <Label>Academic Year <span className="text-red-500">*</span></Label>
-                            <Select value={selectedAyId} onValueChange={setSelectedAyId}>
+                            <Select value={selectedAyId} onValueChange={(val) => setSelectedAyId(val ?? '')}>
                                 <SelectTrigger>
                                     <SelectValue placeholder="Select academic year">
                                         {academicYears.find(ay => String(ay.id) === selectedAyId)?.name || 'Select academic year'}

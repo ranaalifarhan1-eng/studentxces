@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { router, Link, useForm } from '@inertiajs/react';
+import { router, Link, useForm, usePage } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -10,7 +10,8 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Card, CardContent } from '@/components/ui/card';
 import { ArrowLeft, Plus, Users, Printer, FileText, CheckCircle2 } from 'lucide-react';
 import { useCurrency } from '@/lib/currency';
-import type { SchoolClass } from '@/Types';
+import { getSchoolMonth } from '@/lib/school-date';
+import type { SchoolClass, PageProps } from '@/Types';
 
 interface ChallanRow {
     id: number;
@@ -46,14 +47,16 @@ interface Props {
 }
 
 export default function FeeChallansIndex({ challans, classes, academicYears, currentYear, filters }: Props) {
+    const pageProps = usePage().props as any;
     const { format: formatMoney } = useCurrency();
     const [showBulkModal, setShowBulkModal] = useState(false);
+    const defaultMonth = getSchoolMonth(pageProps);
 
     const { data: bulkData, setData: setBulkData, post: postBulk, processing: bulkProcessing, errors: bulkErrors, reset: resetBulk } = useForm({
         class_id:         '',
         section_id:       '',
         academic_year_id: currentYear?.id ? String(currentYear.id) : '',
-        month:            new Date().toISOString().slice(0, 7),
+        month:            defaultMonth,
         due_date:         '',
     });
 
@@ -101,14 +104,14 @@ export default function FeeChallansIndex({ challans, classes, academicYears, cur
 
                 {/* Filters */}
                 <div className="flex gap-3 flex-wrap">
-                    <Select value={filters.class_id ?? ''} onValueChange={v => applyFilter('class_id', v)}>
+                    <Select value={filters.class_id ?? ''} onValueChange={v => applyFilter('class_id', v ?? '')}>
                         <SelectTrigger className="w-40"><SelectValue placeholder="All Classes" /></SelectTrigger>
                         <SelectContent>
                             <SelectItem value="">All Classes</SelectItem>
                             {classes.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
                         </SelectContent>
                     </Select>
-                    <Select value={filters.status ?? ''} onValueChange={v => applyFilter('status', v)}>
+                    <Select value={filters.status ?? ''} onValueChange={v => applyFilter('status', v ?? '')}>
                         <SelectTrigger className="w-36"><SelectValue placeholder="All Status" /></SelectTrigger>
                         <SelectContent>
                             <SelectItem value="">All Status</SelectItem>
@@ -206,7 +209,7 @@ export default function FeeChallansIndex({ challans, classes, academicYears, cur
                             <form onSubmit={handleBulkSubmit} className="space-y-4">
                                 <div className="space-y-1.5">
                                     <Label>Class <span className="text-red-500">*</span></Label>
-                                    <Select value={bulkData.class_id} onValueChange={v => setBulkData('class_id', v)}>
+                                    <Select value={bulkData.class_id} onValueChange={v => setBulkData('class_id', v ?? '')}>
                                         <SelectTrigger><SelectValue placeholder="Select Class" /></SelectTrigger>
                                         <SelectContent>
                                             {classes.map(c => <SelectItem key={c.id} value={String(c.id)}>{c.name}</SelectItem>)}
@@ -217,7 +220,7 @@ export default function FeeChallansIndex({ challans, classes, academicYears, cur
 
                                 <div className="space-y-1.5">
                                     <Label>Academic Year <span className="text-red-500">*</span></Label>
-                                    <Select value={bulkData.academic_year_id} onValueChange={v => setBulkData('academic_year_id', v)}>
+                                    <Select value={bulkData.academic_year_id} onValueChange={v => setBulkData('academic_year_id', v ?? '')}>
                                         <SelectTrigger><SelectValue placeholder="Select Academic Year" /></SelectTrigger>
                                         <SelectContent>
                                             {academicYears.map(y => (

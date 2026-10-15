@@ -76,7 +76,7 @@ class StaffController extends Controller
             'first_name'     => 'required|string|max:100',
             'last_name'      => 'nullable|string|max:100',
             'gender'         => 'required|in:male,female,other',
-            'date_of_birth'  => 'nullable|date',
+            'date_of_birth'  => 'nullable|date|before_or_equal:today',
             'blood_group'    => 'nullable|string|max:5',
             'religion'       => 'nullable|string|max:50',
             'nationality'    => 'nullable|string|max:50',
@@ -84,12 +84,30 @@ class StaffController extends Controller
             'email'          => 'nullable|email|max:150',
             'address'        => 'nullable|string|max:500',
             'department_id'  => ['nullable', SchoolExists::make('departments', 'id', $sid)],
-            'designation_id' => ['nullable', SchoolExists::make('designations', 'id', $sid)],
+            'designation_id' => [
+                'nullable',
+                SchoolExists::make('designations', 'id', $sid),
+                function ($attribute, $value, $fail) use ($sid, $request) {
+                    if (! $value) {
+                        return;
+                    }
+                    $designation = Designation::where('school_id', $sid)->find($value);
+                    if (! $designation) {
+                        return;
+                    }
+                    $deptId = $request->input('department_id');
+                    if ($deptId && $designation->department_id && (int) $designation->department_id !== (int) $deptId) {
+                        $fail('The selected designation does not belong to the selected department.');
+                    }
+                },
+            ],
             'joining_date'   => 'nullable|date',
             'salary_type'    => 'required|in:fixed,hourly',
             'salary'         => 'nullable|numeric|min:0',
             'status'         => 'required|in:active,resigned,terminated,on_leave',
             'notes'          => 'nullable|string|max:1000',
+        ], [
+            'date_of_birth.before_or_equal' => 'Date of birth cannot be in the future.',
         ]);
 
         Staff::create($data);
@@ -123,7 +141,7 @@ class StaffController extends Controller
             'first_name'     => 'required|string|max:100',
             'last_name'      => 'nullable|string|max:100',
             'gender'         => 'required|in:male,female,other',
-            'date_of_birth'  => 'nullable|date',
+            'date_of_birth'  => 'nullable|date|before_or_equal:today',
             'blood_group'    => 'nullable|string|max:5',
             'religion'       => 'nullable|string|max:50',
             'nationality'    => 'nullable|string|max:50',
@@ -131,12 +149,30 @@ class StaffController extends Controller
             'email'          => 'nullable|email|max:150',
             'address'        => 'nullable|string|max:500',
             'department_id'  => ['nullable', SchoolExists::make('departments', 'id', $sid)],
-            'designation_id' => ['nullable', SchoolExists::make('designations', 'id', $sid)],
+            'designation_id' => [
+                'nullable',
+                SchoolExists::make('designations', 'id', $sid),
+                function ($attribute, $value, $fail) use ($sid, $request) {
+                    if (! $value) {
+                        return;
+                    }
+                    $designation = Designation::where('school_id', $sid)->find($value);
+                    if (! $designation) {
+                        return;
+                    }
+                    $deptId = $request->input('department_id');
+                    if ($deptId && $designation->department_id && (int) $designation->department_id !== (int) $deptId) {
+                        $fail('The selected designation does not belong to the selected department.');
+                    }
+                },
+            ],
             'joining_date'   => 'nullable|date',
             'salary_type'    => 'required|in:fixed,hourly',
             'salary'         => 'nullable|numeric|min:0',
             'status'         => 'required|in:active,resigned,terminated,on_leave',
             'notes'          => 'nullable|string|max:1000',
+        ], [
+            'date_of_birth.before_or_equal' => 'Date of birth cannot be in the future.',
         ]);
 
         $staff->update($data);

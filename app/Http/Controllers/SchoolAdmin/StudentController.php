@@ -26,6 +26,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
+use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -217,7 +218,7 @@ class StudentController extends Controller
             'first_name'      => 'required|string|max:100',
             'last_name'       => 'nullable|string|max:100',
             'gender'          => 'required|in:male,female,other',
-            'date_of_birth'   => 'nullable|date',
+            'date_of_birth'   => 'nullable|date|before_or_equal:today',
             'blood_group'     => 'nullable|string|max:5',
             'religion'        => 'nullable|string|max:50',
             'nationality'     => 'nullable|string|max:50',
@@ -231,7 +232,12 @@ class StudentController extends Controller
             'roll_no'         => 'nullable|string|max:50',
             // Class
             'class_id'        => ['required', SchoolExists::make('classes', 'id', $sid)],
-            'section_id'      => ['nullable', SchoolExists::make('sections', 'id', $sid)],
+            'section_id'      => [
+                'nullable',
+                Rule::exists('sections', 'id')->where(fn ($q) =>
+                    $q->where('school_id', $sid)->where('class_id', $request->input('class_id'))
+                ),
+            ],
             // Guardian
             'guardian_id'         => ['nullable', SchoolExists::make('guardians', 'id', $sid)],
             'guardian.name'       => 'required_without:guardian_id|nullable|string|max:150',
@@ -258,7 +264,10 @@ class StudentController extends Controller
             'concession.fee_category_id'     => ['nullable', SchoolExists::make('fee_categories', 'id', $sid)],
         ];
 
-        $data = $request->validate($rules);
+        $data = $request->validate($rules, [
+            'date_of_birth.before_or_equal' => 'Date of birth cannot be in the future.',
+            'section_id.exists'             => 'The selected section does not belong to the selected class or school.',
+        ]);
 
         // Specific human-readable validation checks
         if (! empty($data['generate_first_challan']) && ! empty($data['due_date'])) {
@@ -492,7 +501,7 @@ class StudentController extends Controller
             'first_name'      => 'required|string|max:100',
             'last_name'       => 'nullable|string|max:100',
             'gender'          => 'required|in:male,female,other',
-            'date_of_birth'   => 'nullable|date',
+            'date_of_birth'   => 'nullable|date|before_or_equal:today',
             'blood_group'     => 'nullable|string|max:5',
             'religion'        => 'nullable|string|max:50',
             'nationality'     => 'nullable|string|max:50',
@@ -505,13 +514,21 @@ class StudentController extends Controller
             'previous_school' => 'nullable|string|max:200',
             'roll_no'         => 'nullable|string|max:50',
             'class_id'        => ['required', SchoolExists::make('classes', 'id', $sid)],
-            'section_id'      => ['nullable', SchoolExists::make('sections', 'id', $sid)],
+            'section_id'      => [
+                'nullable',
+                Rule::exists('sections', 'id')->where(fn ($q) =>
+                    $q->where('school_id', $sid)->where('class_id', $request->input('class_id'))
+                ),
+            ],
             'guardian.name'       => 'required|string|max:150',
             'guardian.relation'   => 'required|string|max:50',
             'guardian.phone'      => 'nullable|string|max:20',
             'guardian.email'      => 'nullable|email|max:150',
             'guardian.occupation' => 'nullable|string|max:100',
             'guardian.address'    => 'nullable|string|max:500',
+        ], [
+            'date_of_birth.before_or_equal' => 'Date of birth cannot be in the future.',
+            'section_id.exists'             => 'The selected section does not belong to the selected class or school.',
         ]);
 
         DB::transaction(function () use ($data, $student) {

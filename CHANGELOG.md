@@ -3,6 +3,38 @@
 All meaningful product changes, enhancements, fixes and production releases
 are recorded here.
 
+## [2026-10-15 22:17 PKT] — Phase 3B.1 Critical Relational Integrity Hardening
+
+**Module:** Relational Integrity / Admissions / Fees & Staff / Validation<br>
+**Status:** Committed<br>
+**Commit:** Pending
+
+### Fixed
+- **Fee Payment Student-Challan Binding Integrity:**
+  - Resolved relational validation bypass in `FeePaymentController::store` where `student_id` and `fee_challan_id` were validated independently.
+  - Enforced strict server-side precheck and in-transaction validation requiring `challan.school_id == active school`, `challan.student_id == submitted student_id`, and challan eligibility (`status IN ('unpaid', 'partial')`).
+  - Cross-student payment attempts, cross-school challans, and voided challans are strictly rejected before any financial ledger mutation, leaving `FeePayment`, challan balance, receipts, and student ledgers unaltered.
+  - Preserved idempotency replay priority so duplicate requests with processed idempotency keys safely return the existing payment receipt.
+- **Class-to-Section Relational Scoping:**
+  - Enforced strict server validation in `StudentController::store` and `StudentController::update` requiring `section_id` to belong to both the active school and the selected `class_id`.
+  - Cross-class and cross-school section assignments are rejected with standard 422 validation errors while preserving optional null sections.
+- **Staff Department-to-Designation Relational Scoping:**
+  - Validated existing `designations.department_id` parent relation in `StaffController::store` and `StaffController::update`.
+  - Enforced that when both department and designation are specified, the selected designation must belong to the selected department and active school.
+- **Student Admission Guardian Link UX:**
+  - Refactored frontend Zod schema in `Students/Create.tsx` using `superRefine` so that selecting an existing guardian (`guardian_id`) bypasses new-guardian required field validation, while creating a new guardian strictly enforces name and relation.
+- **Staff Wizard Step Validation & Error Visibility:**
+  - Hardened `Staff/Create.tsx` wizard transitions so clicking "Next" validates required fields on the active step (`first_name`, `gender` on Step 0; `status`, `salary_type` on Step 1), blocking advancement on invalid input and surfacing visible errors immediately.
+  - Added `onError` navigation routing server-side 422 validation responses directly to the tab containing the error.
+- **Date-of-Birth Chronological Safety:**
+  - Enforced `before_or_equal:today` on `date_of_birth` across student admission, student edit, staff registration, and staff edit.
+
+### Added
+- **Automated Relational Integrity Test Suites (17 tests, 73 assertions):**
+  - `FeePaymentRelationalIntegrityTest.php` (5 tests): verifies cross-student challan rejection, zero ledger mutation on failure, financial atomicity, cross-school challan rejection, void challan rejection, already-paid challan rejection, and matching student-challan payment success.
+  - `StudentClassSectionIntegrityTest.php` (7 tests): verifies matching class-section admission, cross-class section rejection, cross-school section rejection, null section allowance, future DOB rejection, update class-section integrity, and existing guardian link bypass.
+  - `StaffRelationalIntegrityTest.php` (5 tests): verifies matching department-designation registration, mismatched department-designation rejection, cross-school designation rejection, future DOB rejection, and staff update department-designation integrity.
+
 ## [2026-10-13 16:55 PKT] — Permanent Cross-Workflow Fee Idempotency Fix
 
 **Module:** Fees & Admissions / Multi-Tenancy / Idempotency<br>

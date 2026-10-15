@@ -224,6 +224,32 @@ class FeePaymentController extends Controller
             }
         }
 
+        if (! empty($data['fee_challan_id'])) {
+            $challanPrecheck = FeeChallan::where('school_id', $sid)
+                ->where('id', $data['fee_challan_id'])
+                ->first();
+
+            if (! $challanPrecheck) {
+                throw ValidationException::withMessages([
+                    'fee_challan_id' => 'The selected challan does not belong to the active school.',
+                ]);
+            }
+
+            if ((int) $challanPrecheck->student_id !== (int) $data['student_id']) {
+                throw ValidationException::withMessages([
+                    'fee_challan_id' => 'The selected challan does not belong to the selected student.',
+                    'student_id'     => 'The selected student does not match the challan student.',
+                ]);
+            }
+
+            if (! in_array($challanPrecheck->status, ['unpaid', 'partial'], true)) {
+                throw ValidationException::withMessages([
+                    'fee_challan_id' => "Challan {$challanPrecheck->challan_no} cannot accept payments (status: {$challanPrecheck->status}).",
+                    'challan_id'     => "Challan {$challanPrecheck->challan_no} cannot accept payments (status: {$challanPrecheck->status}).",
+                ]);
+            }
+        }
+
         $payingCents = Money::toCents((string) $data['amount_paid']);
         if ($payingCents <= 0) {
             throw ValidationException::withMessages(['amount_paid' => 'Payment amount must be greater than zero.']);
@@ -253,7 +279,20 @@ class FeePaymentController extends Controller
                     $challan = FeeChallan::where('school_id', $sid)
                         ->where('id', $data['fee_challan_id'])
                         ->lockForUpdate()
-                        ->firstOrFail();
+                        ->first();
+
+                    if (! $challan) {
+                        throw ValidationException::withMessages([
+                            'fee_challan_id' => 'The selected challan does not belong to the active school.',
+                        ]);
+                    }
+
+                    if ((int) $challan->student_id !== (int) $data['student_id']) {
+                        throw ValidationException::withMessages([
+                            'fee_challan_id' => 'The selected challan does not belong to the selected student.',
+                            'student_id'     => 'The selected student does not match the challan student.',
+                        ]);
+                    }
 
                     if (! in_array($challan->status, ['unpaid', 'partial'], true)) {
                         throw ValidationException::withMessages([

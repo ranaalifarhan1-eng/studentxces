@@ -85,13 +85,30 @@ const schema = z.object({
     guardian_id: z.coerce.number().int().positive().nullable().optional(),
     // Guardian
     guardian: z.object({
-        name:       z.string().min(1, 'Guardian name is required'),
-        relation:   z.string().min(1, 'Relation is required'),
+        name:       z.string().optional(),
+        relation:   z.string().optional(),
         phone:      z.string().optional(),
         email:      z.string().email().optional().or(z.literal('')),
         occupation: z.string().optional(),
         address:    z.string().optional(),
     }),
+}).superRefine((data, ctx) => {
+    if (!data.guardian_id) {
+        if (!data.guardian?.name || !data.guardian.name.trim()) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'Guardian name is required',
+                path: ['guardian', 'name'],
+            });
+        }
+        if (!data.guardian?.relation || !data.guardian.relation.trim()) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: 'Relation is required',
+                path: ['guardian', 'relation'],
+            });
+        }
+    }
 });
 
 type FormData = z.infer<typeof schema>;
@@ -408,8 +425,21 @@ export default function CreateStudent() {
             }
             setStep(2);
         } else if (step === 2) {
-            const valid = await trigger(['guardian.name', 'guardian.relation']);
-            if (!valid) return;
+            const guardianId = watch('guardian_id');
+            if (!guardianId) {
+                const name = watch('guardian.name');
+                const relation = watch('guardian.relation');
+                let hasErr = false;
+                if (!name || !name.trim()) {
+                    setError('guardian.name', { message: 'Guardian name is required' });
+                    hasErr = true;
+                }
+                if (!relation || !relation.trim()) {
+                    setError('guardian.relation', { message: 'Relation is required' });
+                    hasErr = true;
+                }
+                if (hasErr) return;
+            }
             setStep(3);
         } else if (step === 3) {
             let hasError = false;

@@ -23,7 +23,7 @@ const STEPS = ['Personal Info', 'Employment Details', 'Notes & Status'];
 export default function StaffCreate({ departments, designations }: Props) {
     const [step, setStep] = useState(0);
 
-    const { data, setData, post, processing, errors } = useForm({
+    const { data, setData, post, processing, errors, setError, clearErrors } = useForm({
         first_name:    '',
         last_name:     '',
         gender:        '',
@@ -43,12 +43,62 @@ export default function StaffCreate({ departments, designations }: Props) {
         notes: '',
     });
 
-    function next() { setStep(s => Math.min(s + 1, STEPS.length - 1)); }
-    function prev() { setStep(s => Math.max(s - 1, 0)); }
+    function validateStep(currentStep: number): boolean {
+        let hasError = false;
+        if (currentStep === 0) {
+            clearErrors('first_name', 'gender');
+            if (!data.first_name || !data.first_name.trim()) {
+                setError('first_name', 'First name is required');
+                hasError = true;
+            }
+            if (!data.gender) {
+                setError('gender', 'Gender is required');
+                hasError = true;
+            }
+        } else if (currentStep === 1) {
+            clearErrors('status', 'salary_type');
+            if (!data.status) {
+                setError('status', 'Status is required');
+                hasError = true;
+            }
+            if (!data.salary_type) {
+                setError('salary_type', 'Salary type is required');
+                hasError = true;
+            }
+        }
+        return !hasError;
+    }
+
+    function next() {
+        if (!validateStep(step)) {
+            return;
+        }
+        setStep(s => Math.min(s + 1, STEPS.length - 1));
+    }
+
+    function prev() {
+        setStep(s => Math.max(s - 1, 0));
+    }
 
     function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
-        post('/school/staff');
+        if (!validateStep(0)) {
+            setStep(0);
+            return;
+        }
+        if (!validateStep(1)) {
+            setStep(1);
+            return;
+        }
+        post('/school/staff', {
+            onError: (errs) => {
+                if (errs.first_name || errs.last_name || errs.gender || errs.date_of_birth || errs.email || errs.phone) {
+                    setStep(0);
+                } else if (errs.department_id || errs.designation_id || errs.joining_date || errs.salary || errs.salary_type || errs.status) {
+                    setStep(1);
+                }
+            }
+        });
     }
 
     const filteredDesignations = data.department_id
@@ -192,6 +242,7 @@ export default function StaffCreate({ departments, designations }: Props) {
                                                 {departments.map(d => <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>)}
                                             </SelectContent>
                                         </Select>
+                                        {errors.department_id && <p className="text-xs text-red-500">{errors.department_id}</p>}
                                     </div>
                                     <div className="space-y-1.5">
                                         <Label>Designation</Label>
@@ -201,6 +252,7 @@ export default function StaffCreate({ departments, designations }: Props) {
                                                 {filteredDesignations.map(d => <SelectItem key={d.id} value={String(d.id)}>{d.name}</SelectItem>)}
                                             </SelectContent>
                                         </Select>
+                                        {errors.designation_id && <p className="text-xs text-red-500">{errors.designation_id}</p>}
                                     </div>
                                 </div>
 
@@ -208,6 +260,7 @@ export default function StaffCreate({ departments, designations }: Props) {
                                     <div className="space-y-1.5">
                                         <Label>Joining Date</Label>
                                         <Input type="date" value={data.joining_date} onChange={e => setData('joining_date', e.target.value)} />
+                                        {errors.joining_date && <p className="text-xs text-red-500">{errors.joining_date}</p>}
                                     </div>
                                     <div className="space-y-1.5">
                                         <Label>Status <span className="text-red-500">*</span></Label>

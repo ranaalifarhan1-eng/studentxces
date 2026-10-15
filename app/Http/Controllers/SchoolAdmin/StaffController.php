@@ -8,6 +8,7 @@ use App\Models\Designation;
 use App\Models\Staff;
 use App\Models\StaffDocument;
 use App\Rules\SchoolExists;
+use App\Support\Search\SearchTermNormalizer;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
@@ -19,12 +20,7 @@ class StaffController extends Controller
     public function index(Request $request): Response
     {
         $staff = Staff::with(['department:id,name', 'designation:id,name'])
-            ->when($request->search, fn ($q) => $q->where(function ($q) use ($request) {
-                $q->where('first_name', 'like', "%{$request->search}%")
-                  ->orWhere('last_name',  'like', "%{$request->search}%")
-                  ->orWhere('emp_id',     'like', "%{$request->search}%")
-                  ->orWhere('email',      'like', "%{$request->search}%");
-            }))
+            ->when($request->search, fn ($q) => SearchTermNormalizer::applyStaffSearch($q, $request->search))
             ->when($request->department_id,  fn ($q) => $q->where('department_id',  $request->department_id))
             ->when($request->designation_id, fn ($q) => $q->where('designation_id', $request->designation_id))
             ->when($request->status,         fn ($q) => $q->where('status',         $request->status))

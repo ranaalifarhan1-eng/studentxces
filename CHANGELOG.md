@@ -3,6 +3,28 @@
 All meaningful product changes, enhancements, fixes and production releases
 are recorded here.
 
+## [2026-10-15 23:42 PKT] — Phase 3C Multi-Word Search Normalization
+
+**Module:** Core / Search & Normalization / Tenant Scoping<br>
+**Status:** Production (Deployed 2026-10-15 23:59 PKT)<br>
+**Commit:** fix(search): normalize multi-word school search
+
+### Enhanced
+- **Shared Multi-Word Search Term Normalizer (`SearchTermNormalizer`):**
+  - Introduced unified helper `App\Support\Search\SearchTermNormalizer` providing centralized whitespace trimming, multiple-space collapsing, word tokenization, and LIKE wildcard escaping (`%`, `_`, `\`).
+  - Standardized multi-word search across audited flows: `StudentController::index`, `FeePaymentController::index` (both challans and payments tabs), `FeePaymentController::create` (student candidate lookup), `StaffController::index`, and `TransportController::assignments`.
+- **NULL-Safe Multi-Word Person Name Matching:**
+  - Replaced isolated `first_name` and `last_name` `LIKE` predicates with tokenized `CONCAT_WS(' ', first_name, last_name)` matching, ensuring that every search token is required across the person's full name without breaking on `NULL` last names.
+  - Resolved regression where exact multi-word searches (e.g., "Ali Khan" or "Muhammad Ali Khan") or multi-spaced inputs returned zero results.
+- **Admission Number & Identifier Search Preservation:**
+  - Preserved exact and partial admission number search alongside candidate ID lookup without interference from name tokenization.
+  - Guaranteed whitespace-only queries cleanly bypass search filtering without generating redundant queries.
+
+### Added
+- **Automated Search Normalization Test Suites (20 tests, 262 assertions):**
+  - `SearchTermNormalizerTest.php` (4 tests, 22 assertions): unit tests verifying whitespace collapsing, token extraction, LIKE wildcard escaping, and empty query detection.
+  - `MultiWordSearchNormalizationTest.php` (16 tests, 240 assertions): feature test matrix verifying single name, full name, multi-word name, extra internal spaces, NULL last name, exact admission number, partial admission number, mixed case, whitespace-only queries, fee payments list full-name search, fee challans list full-name search, fee collection candidate lookup, staff full-name search, transport assignment search, and strict multi-tenant isolation.
+
 ## [2026-10-15 22:17 PKT] — Phase 3B.1 Critical Relational Integrity Hardening
 
 **Module:** Relational Integrity / Admissions / Fees & Staff / Validation<br>

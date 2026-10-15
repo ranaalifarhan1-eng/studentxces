@@ -13,6 +13,7 @@ use App\Models\StudentFeeDiscount;
 use App\Rules\SchoolExists;
 use App\Services\DocumentSequenceService;
 use App\Support\Money;
+use App\Support\Search\SearchTermNormalizer;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Validation\ValidationException;
@@ -35,11 +36,7 @@ class FeePaymentController extends Controller
         ])
             ->where('school_id', $sid)
             ->when($request->class_id, fn ($q) => $q->where('class_id', $request->class_id))
-            ->when($request->search, fn ($q) => $q->where(function ($sq) use ($request) {
-                $sq->where('challan_no', 'like', "%{$request->search}%")
-                   ->orWhere('student_name', 'like', "%{$request->search}%")
-                   ->orWhere('admission_no', 'like', "%{$request->search}%");
-            }))
+            ->when($request->search, fn ($q) => SearchTermNormalizer::applyChallanSearch($q, $request->search))
             ->when($request->status, function ($q, $status) {
                 if ($status === 'overdue') {
                     $q->whereIn('status', ['unpaid', 'partial'])->where('due_date', '<', now()->toDateString());
@@ -64,12 +61,7 @@ class FeePaymentController extends Controller
             ->where('school_id', $sid)
             ->when($request->student_id, fn ($q) => $q->where('student_id', $request->student_id))
             ->when($request->class_id,   fn ($q) => $q->whereHas('student', fn ($sq) => $sq->where('class_id', $request->class_id)))
-            ->when($request->search, fn ($q) => $q->where(function ($sq) use ($request) {
-                $sq->where('receipt_no', 'like', "%{$request->search}%")
-                   ->orWhereHas('student', fn ($ssq) => $ssq->where('first_name', 'like', "%{$request->search}%")
-                       ->orWhere('last_name', 'like', "%{$request->search}%")
-                       ->orWhere('admission_no', 'like', "%{$request->search}%"));
-            }))
+            ->when($request->search, fn ($q) => SearchTermNormalizer::applyFeePaymentSearch($q, $request->search))
             ->when($request->month_year, fn ($q) => $q->where('month_year', $request->month_year))
             ->latest('payment_date')
             ->latest('id');
@@ -104,20 +96,13 @@ class FeePaymentController extends Controller
             $student = Student::where('school_id', $sid)
                 ->with(['schoolClass:id,name', 'section:id,name', 'guardian:id,name,phone'])
                 ->find($studentId);
-        } elseif ($searchParam) {
-            $candidates = Student::where('school_id', $sid)
-                ->where(function ($q) use ($searchParam) {
-                    $q->where('admission_no', $searchParam);
-                    if (is_numeric($searchParam)) {
-                        $q->orWhere('id', (int) $searchParam);
-                    }
-                    $q->orWhere('first_name', 'like', "%{$searchParam}%")
-                      ->orWhere('last_name', 'like', "%{$searchParam}%")
-                      ->orWhereRaw("CONCAT(first_name, ' ', last_name) LIKE ?", ["%{$searchParam}%"]);
-                })
-                ->with(['schoolClass:id,name', 'section:id,name', 'guardian:id,name,phone'])
-                ->limit(10)
-                ->get();
+        } elseif (! SearchTermNormalizer::isEmpty($searchParam)) {
+            $candidatesQuery = Student::where('school_id', $sid)
+                ->with(['schoolClass:id,name', 'section:id,name', 'guardian:id,name,phone']);
+
+            SearchTermNormalizer::applyStudentSearch($candidatesQuery, $searchParam, includeId: true);
+
+            $candidates = $candidatesQuery->limit(10)->get();
 
             if ($candidates->count() === 1) {
                 $student = $candidates->first();

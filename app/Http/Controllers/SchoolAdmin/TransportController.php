@@ -7,6 +7,7 @@ use App\Models\Student;
 use App\Models\TransportRoute;
 use App\Models\Vehicle;
 use App\Rules\SchoolExists;
+use App\Support\Search\SearchTermNormalizer;
 use Illuminate\Http\Request;
 use Inertia\Inertia;
 
@@ -158,11 +159,7 @@ class TransportController extends Controller
         $available = Student::where('school_id', $sid)
             ->where('status', 'active')
             ->whereNotIn('id', $assignedIds)
-            ->when($request->search, fn ($q) => $q->where(fn ($q2) =>
-                $q2->where('first_name', 'like', "%{$request->search}%")
-                   ->orWhere('last_name',  'like', "%{$request->search}%")
-                   ->orWhere('admission_no', 'like', "%{$request->search}%")
-            ))
+            ->when($request->search, fn ($q) => SearchTermNormalizer::applyStudentSearch($q, $request->search))
             ->with('schoolClass:id,name')
             ->orderBy('first_name')
             ->limit(50)

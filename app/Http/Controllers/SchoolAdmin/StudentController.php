@@ -18,6 +18,7 @@ use App\Services\FeeBillingService;
 use App\Services\PortalCredentialService;
 use App\Services\StudentFeeAssignmentService;
 use App\Services\StudentFinancialLedgerService;
+use App\Support\Search\SearchTermNormalizer;
 use Carbon\Carbon;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\RedirectResponse;
@@ -73,11 +74,7 @@ class StudentController extends Controller
     public function index(Request $request): Response
     {
         $students = Student::with(['schoolClass:id,name', 'section:id,name', 'guardian:id,name,phone'])
-            ->when($request->search, fn ($q) => $q->where(function ($q) use ($request) {
-                $q->where('first_name', 'like', "%{$request->search}%")
-                  ->orWhere('last_name',  'like', "%{$request->search}%")
-                  ->orWhere('admission_no', 'like', "%{$request->search}%");
-            }))
+            ->when($request->search, fn ($q) => SearchTermNormalizer::applyStudentSearch($q, $request->search))
             ->when($request->class_id,  fn ($q) => $q->where('class_id',  $request->class_id))
             ->when($request->section_id, fn ($q) => $q->where('section_id', $request->section_id))
             ->when($request->status,    fn ($q) => $q->where('status',    $request->status))

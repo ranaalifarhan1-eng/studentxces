@@ -117,9 +117,23 @@ export default function FeeReceipt({ payment }: { payment: FeePayment }) {
 
     return (
         <AppLayout title={`Receipt #${payment.receipt_no}`}>
+            <style>{`
+                @media print {
+                    body * { visibility: hidden !important; }
+                    #receipt-print-area, #receipt-print-area * { visibility: visible !important; }
+                    #receipt-print-area {
+                        position: fixed !important;
+                        inset: 0 !important;
+                        width: 100% !important;
+                        padding: 24px !important;
+                        background: white !important;
+                        color: black !important;
+                    }
+                }
+            `}</style>
             <div className="max-w-xl mx-auto space-y-6">
                 {/* Navigation and Print Bar */}
-                <div className="flex items-center justify-between no-print">
+                <div className="flex items-center justify-between print:hidden">
                     <Link
                         href="/school/fees/payments"
                         className="inline-flex items-center gap-1.5 text-sm text-slate-500 hover:text-slate-900 dark:hover:text-white"
@@ -141,12 +155,12 @@ export default function FeeReceipt({ payment }: { payment: FeePayment }) {
                 </div>
 
                 {/* Printable Receipt Card */}
-                <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-8 shadow-sm space-y-6 print:shadow-none print:border-slate-300 print:rounded-none">
+                <div id="receipt-print-area" className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-950 p-8 shadow-sm space-y-6 print:shadow-none print:border-none print:rounded-none">
                     {/* Header */}
                     <div className="flex justify-between items-start pb-4 border-b border-slate-200 dark:border-slate-800">
                         <div>
                             <div className="flex items-center gap-2">
-                                <CheckCircle2 className="w-5 h-5 text-green-600 no-print" />
+                                <CheckCircle2 className="w-5 h-5 text-green-600 print:hidden" />
                                 <h2 className="text-xl font-bold text-slate-900 dark:text-white">Official Fee Receipt</h2>
                             </div>
                             <p className="font-mono text-sm text-indigo-600 font-semibold mt-1">#{payment.receipt_no}</p>

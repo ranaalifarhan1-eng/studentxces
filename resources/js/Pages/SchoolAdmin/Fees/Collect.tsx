@@ -120,9 +120,12 @@ export default function CollectFee({
     const defaultPaymentDate = getSchoolToday(pageProps);
     const [searchInput, setSearchInput] = useState(searchQuery);
 
-    const initialChallan = activeChallans.find(c => String(c.id) === String(selectedChallanId))
-        ?? activeChallans[0]
-        ?? null;
+    const payableChallans = (activeChallans || []).filter(c => ['unpaid', 'partial'].includes(c.status));
+
+    const requestedChallan = selectedChallanId
+        ? payableChallans.find(c => String(c.id) === String(selectedChallanId))
+        : null;
+    const initialChallan = requestedChallan ?? (payableChallans.length === 1 ? payableChallans[0] : null);
 
     const [selectedChallan, setSelectedChallan] = useState<FeeChallan | null>(initialChallan);
 
@@ -164,11 +167,15 @@ export default function CollectFee({
     }
     const previewRevisedBal = Math.max(0, previewCurBal - previewNewAdj);
 
+    const initialBal = initialChallan
+        ? Math.max(0, Number(initialChallan.total_payable) - Number(initialChallan.paid_amount))
+        : 0;
+
     const { data, setData, post, processing, errors, reset } = useForm({
         student_id:       student?.id ? String(student.id) : '',
         fee_challan_id:   initialChallan ? String(initialChallan.id) : '',
         fee_structure_id: '',
-        amount_paid:      currentBalance > 0 ? String(currentBalance.toFixed(2)) : '',
+        amount_paid:      initialBal > 0 ? String(initialBal.toFixed(2)) : '',
         payment_date:     defaultPaymentDate,
         method:           'cash',
         reference:        '',
@@ -176,23 +183,55 @@ export default function CollectFee({
         idempotency_key:  idempotencyKey || '',
     });
 
+    // Synchronize form and challan selection whenever student, activeChallans, or selectedChallanId changes
     useEffect(() => {
-        if (student?.id) {
-            setData(d => ({ ...d, student_id: String(student.id) }));
+        if (!student) {
+            setSelectedChallan(null);
+            setData(d => ({
+                ...d,
+                student_id: '',
+                fee_challan_id: '',
+                amount_paid: '',
+            }));
+            return;
         }
-    }, [student]);
 
-    // Refresh selected challan when activeChallans prop changes
-    useEffect(() => {
-        if (selectedChallan) {
-            const fresh = activeChallans.find(c => String(c.id) === String(selectedChallan.id));
-            if (fresh) {
-                setSelectedChallan(fresh);
-                const freshBal = Math.max(0, Number(fresh.total_payable) - Number(fresh.paid_amount));
-                setData(d => ({ ...d, amount_paid: freshBal > 0 ? freshBal.toFixed(2) : '' }));
-            }
+        const payableList = (activeChallans || []).filter(c => ['unpaid', 'partial'].includes(c.status));
+        const explicitMatch = selectedChallanId
+            ? payableList.find(c => String(c.id) === String(selectedChallanId))
+            : null;
+
+        if (explicitMatch) {
+            setSelectedChallan(explicitMatch);
+            const bal = Math.max(0, Number(explicitMatch.total_payable) - Number(explicitMatch.paid_amount));
+            setData(d => ({
+                ...d,
+                student_id: String(student.id),
+                fee_challan_id: String(explicitMatch.id),
+                amount_paid: bal > 0 ? bal.toFixed(2) : '',
+            }));
+        } else if (payableList.length === 1) {
+            const single = payableList[0];
+            setSelectedChallan(single);
+            const bal = Math.max(0, Number(single.total_payable) - Number(single.paid_amount));
+            setData(d => ({
+                ...d,
+                student_id: String(student.id),
+                fee_challan_id: String(single.id),
+                amount_paid: bal > 0 ? bal.toFixed(2) : '',
+            }));
+        } else {
+            // 0 payable challans OR 2+ payable challans:
+            // Explicit user selection is required! Reset stale challan and amount state.
+            setSelectedChallan(null);
+            setData(d => ({
+                ...d,
+                student_id: String(student.id),
+                fee_challan_id: '',
+                amount_paid: '',
+            }));
         }
-    }, [activeChallans]);
+    }, [student?.id, selectedChallanId, activeChallans]);
 
     function handleApplyAdjustment(e: React.FormEvent) {
         e.preventDefault();
@@ -227,9 +266,18 @@ export default function CollectFee({
     }
 
     function onChallanSelect(challanIdStr: string) {
-        const ch = activeChallans.find(c => String(c.id) === challanIdStr) ?? null;
+        if (!challanIdStr) {
+            setSelectedChallan(null);
+            setData(d => ({
+                ...d,
+                fee_challan_id: '',
+                amount_paid: '',
+            }));
+            return;
+        }
+        const ch = payableChallans.find(c => String(c.id) === challanIdStr) ?? null;
         setSelectedChallan(ch);
-        const bal = Math.max(0, Number(ch?.total_payable ?? 0) - Number(ch?.paid_amount ?? 0));
+        const bal = ch ? Math.max(0, Number(ch.total_payable) - Number(ch.paid_amount)) : 0;
         setData(d => ({
             ...d,
             fee_challan_id: challanIdStr,
@@ -245,6 +293,9 @@ export default function CollectFee({
 
     function handleSubmit(e: React.FormEvent) {
         e.preventDefault();
+        if (!data.fee_challan_id || !selectedChallan) {
+            return;
+        }
         post('/school/fees/payments', {
             onSuccess: () => reset(),
         });
@@ -332,207 +383,240 @@ export default function CollectFee({
                             </CardHeader>
                             <CardContent>
                                 <form onSubmit={handleSubmit} className="space-y-4">
-                                    {/* Challan Selector */}
-                                    {activeChallans.length > 0 ? (
-                                        <div className="space-y-1.5">
-                                            <Label>Select Active Challan / Obligation <span className="text-red-500">*</span></Label>
-                                            <Select value={data.fee_challan_id} onValueChange={(val) => onChallanSelect(val ?? '')}>
-                                                <SelectTrigger><SelectValue placeholder="Select challan" /></SelectTrigger>
-                                                <SelectContent>
-                                                    {activeChallans.map(c => {
-                                                        const bal = Math.max(0, Number(c.total_payable) - Number(c.paid_amount));
-                                                        return (
-                                                            <SelectItem key={c.id} value={String(c.id)}>
-                                                                {c.display_label || `Challan #${c.challan_no} (${c.billing_period_label || c.billing_period_key}) — Total: ${formatMoney(Number(c.total_payable))} · Balance: ${formatMoney(bal)}`}
-                                                            </SelectItem>
-                                                        );
-                                                    })}
-                                                </SelectContent>
-                                            </Select>
-                                            {errors.fee_challan_id && <p className="text-xs text-red-500">{errors.fee_challan_id}</p>}
+                                    {payableChallans.length === 0 ? (
+                                        <div className="rounded-xl border border-amber-200 bg-amber-50/70 p-5 text-sm text-amber-900 dark:border-amber-900/50 dark:bg-amber-950/20 dark:text-amber-200 space-y-2">
+                                            <div className="flex items-center gap-2 font-semibold text-base text-amber-800 dark:text-amber-300">
+                                                <AlertCircle className="w-5 h-5 text-amber-600 flex-shrink-0" />
+                                                No Payable Fee Challans Found
+                                            </div>
+                                            <p className="text-xs text-amber-700 dark:text-amber-400">
+                                                This student has no outstanding unpaid or partial fee challans available for collection. Payment submission is disabled.
+                                            </p>
+                                            <div className="pt-2 flex items-center gap-3">
+                                                <Link href={`/school/students/${student.id}?tab=fees`}>
+                                                    <Button type="button" size="sm" variant="outline" className="text-xs bg-white dark:bg-slate-900">
+                                                        View Student Fee Ledger
+                                                    </Button>
+                                                </Link>
+                                                <Link href="/school/fees/payments?tab=challans">
+                                                    <Button type="button" size="sm" variant="outline" className="text-xs bg-white dark:bg-slate-900">
+                                                        Issue New Challan
+                                                    </Button>
+                                                </Link>
+                                            </div>
                                         </div>
                                     ) : (
-                                        <div className="rounded-lg bg-amber-50 border border-amber-200 p-3 text-sm text-amber-700">
-                                            No active pending challan found for this student. You may record an ad-hoc payment against a fee structure below, or generate a challan first.
-                                        </div>
-                                    )}
-
-                                    {/* Breakdown Box if Challan Selected */}
-                                    {selectedChallan && (
-                                        <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-4 bg-slate-50/50 dark:bg-slate-900/50 space-y-2 text-sm">
-                                            <div className="flex justify-between text-slate-600">
-                                                <span>Gross Fees</span>
-                                                <span>{formatMoney(Number(selectedChallan.gross_amount))}</span>
-                                            </div>
-                                            {Number(selectedChallan.discount_amount) > 0 && (
-                                                <div className="flex justify-between text-emerald-600">
-                                                    <span>Student Concession ({selectedChallan.discount_title ?? 'Approved Concession'})</span>
-                                                    <span>-{formatMoney(Number(selectedChallan.discount_amount))}</span>
-                                                </div>
-                                            )}
-                                            {Number(selectedChallan.adjustment_amount || 0) > 0 && (
-                                                <div className="flex justify-between text-indigo-600 font-medium">
-                                                    <span>Post-Issue Collection Adjustments</span>
-                                                    <span>-{formatMoney(Number(selectedChallan.adjustment_amount))}</span>
-                                                </div>
-                                            )}
-                                            <div className="flex justify-between font-semibold border-t border-slate-200 dark:border-slate-800 pt-1.5">
-                                                <span>Net Obligation</span>
-                                                <span>{formatMoney(Number(selectedChallan.total_payable))}</span>
-                                            </div>
-                                            <div className="flex justify-between text-slate-600">
-                                                <span>Already Paid</span>
-                                                <span className="text-emerald-600 font-medium">{formatMoney(Number(selectedChallan.paid_amount))}</span>
-                                            </div>
-                                            <div className="flex justify-between font-bold text-base border-t border-slate-200 dark:border-slate-800 pt-1.5 text-red-600">
-                                                <span>Outstanding Balance</span>
-                                                <span className={currentBalance === 0 ? 'text-emerald-600' : ''}>{formatMoney(currentBalance)}</span>
-                                            </div>
-
-                                            <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-slate-800 flex-wrap">
-                                                {canAdjust && currentBalance > 0 && (
-                                                    <Button
-                                                        type="button"
-                                                        variant="outline"
-                                                        size="sm"
-                                                        onClick={openAdjustmentModal}
-                                                        className="text-xs text-indigo-600 border-indigo-200 hover:bg-indigo-50 dark:hover:bg-indigo-950 inline-flex items-center gap-1.5"
-                                                    >
-                                                        <PlusCircle className="w-3.5 h-3.5" /> Apply One-Time Adjustment
-                                                    </Button>
-                                                )}
-                                                {student && (
-                                                    <Link
-                                                        href={`/school/students/${student.id}?tab=fees`}
-                                                        className="text-xs text-slate-500 hover:text-indigo-600 underline ml-auto inline-flex items-center gap-1"
-                                                    >
-                                                        Manage Student Concession
-                                                    </Link>
-                                                )}
-                                            </div>
-                                        </div>
-                                    )}
-
-                                    {selectedChallan && currentBalance <= 0 && (
-                                        <div className={`rounded-lg p-4 text-sm flex items-center justify-between gap-4 border ${
-                                            Number(selectedChallan.paid_amount) === 0 && Number(selectedChallan.adjustment_amount || 0) > 0
-                                                ? 'bg-purple-50 border-purple-200 text-purple-900 dark:bg-purple-950/30 dark:border-purple-800 dark:text-purple-200'
-                                                : Number(selectedChallan.paid_amount) > 0 && Number(selectedChallan.adjustment_amount || 0) > 0
-                                                    ? 'bg-teal-50 border-teal-200 text-teal-900 dark:bg-teal-950/30 dark:border-teal-800 dark:text-teal-200'
-                                                    : 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                                        }`}>
-                                            <div className="flex items-center gap-2">
-                                                <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
-                                                <div>
-                                                    <p className="font-semibold">
-                                                        {Number(selectedChallan.paid_amount) === 0 && Number(selectedChallan.adjustment_amount || 0) > 0
-                                                            ? 'This challan has been fully cleared via adjustment (Settled — Adjusted / Waived).'
-                                                            : Number(selectedChallan.paid_amount) > 0 && Number(selectedChallan.adjustment_amount || 0) > 0
-                                                                ? 'This challan has been fully settled through payments and adjustments (Settled — Paid + Adjusted).'
-                                                                : 'This challan has been fully paid.'}
-                                                    </p>
-                                                    <p className="text-xs mt-0.5 opacity-90">
-                                                        Outstanding balance is PKR 0.00. No cash payment is due.
-                                                    </p>
-                                                </div>
-                                            </div>
-                                            <Link href={`/school/fees/challans/${selectedChallan.id}`}>
-                                                <Button type="button" size="sm" variant="outline" className="text-xs bg-white dark:bg-slate-900">View Challan</Button>
-                                            </Link>
-                                        </div>
-                                    )}
-
-                                    {/* Collection Input (Hidden when challan is fully settled) */}
-                                    {(!selectedChallan || currentBalance > 0) && (
                                         <>
-                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                                <div className="space-y-1.5">
-                                                    <Label>Amount Receiving ({currency}) <span className="text-red-500">*</span></Label>
-                                                    <Input
-                                                        type="number"
-                                                        min="0.01"
-                                                        step="0.01"
-                                                        value={data.amount_paid}
-                                                        onChange={e => setData('amount_paid', e.target.value)}
-                                                        className={isOverpaying ? 'border-red-500 focus-visible:ring-red-500' : ''}
-                                                    />
-                                                    {errors.amount_paid && <p className="text-xs text-red-500">{errors.amount_paid}</p>}
-                                                    {isOverpaying && (
-                                                        <p className="text-xs text-red-500 font-medium">Cannot overpay. Maximum receivable is {formatMoney(currentBalance)}.</p>
-                                                    )}
+                                            {payableChallans.length >= 2 && !selectedChallan && (
+                                                <div className="rounded-lg bg-blue-50 border border-blue-200 p-3 text-xs text-blue-800 dark:bg-blue-950/30 dark:border-blue-800 dark:text-blue-200 flex items-center gap-2">
+                                                    <AlertCircle className="w-4 h-4 text-blue-600 flex-shrink-0" />
+                                                    <span>This student has <strong>{payableChallans.length} outstanding challans</strong>. Please select which challan to collect payment against.</span>
                                                 </div>
+                                            )}
 
-                                                <div className="space-y-1.5">
-                                                    <Label>Remaining Balance After Payment</Label>
-                                                    <div className={`h-10 rounded-md border px-3 flex items-center font-semibold text-sm ${postBalance > 0 ? 'text-red-600 border-red-200 bg-red-50/50' : 'text-emerald-600 border-emerald-200 bg-emerald-50/50'}`}>
-                                                        {postBalance > 0 ? formatMoney(postBalance) : 'Fully Cleared'}
+                                            {/* Challan Selector */}
+                                            <div className="space-y-1.5">
+                                                <Label>Select Active Challan / Obligation <span className="text-red-500">*</span></Label>
+                                                <Select value={data.fee_challan_id} onValueChange={(val) => onChallanSelect(val ?? '')}>
+                                                    <SelectTrigger><SelectValue placeholder="Choose a payable challan..." /></SelectTrigger>
+                                                    <SelectContent>
+                                                        {payableChallans.map(c => {
+                                                            const bal = Math.max(0, Number(c.total_payable) - Number(c.paid_amount));
+                                                            return (
+                                                                <SelectItem key={c.id} value={String(c.id)}>
+                                                                    {c.display_label || `Challan #${c.challan_no} (${c.billing_period_label || c.billing_period_key}) — Total: ${formatMoney(Number(c.total_payable))} · Balance: ${formatMoney(bal)}`}
+                                                                </SelectItem>
+                                                            );
+                                                        })}
+                                                    </SelectContent>
+                                                </Select>
+                                                {errors.fee_challan_id && <p className="text-xs text-red-500">{errors.fee_challan_id}</p>}
+                                            </div>
+
+                                            {!selectedChallan && (
+                                                <div className="rounded-lg border border-dashed border-slate-300 dark:border-slate-700 p-6 text-center text-xs text-slate-500">
+                                                    Please select an outstanding challan above to view obligation details and record payment.
+                                                </div>
+                                            )}
+
+                                            {/* Breakdown Box if Challan Selected */}
+                                            {selectedChallan && (
+                                                <div className="rounded-xl border border-slate-200 dark:border-slate-800 p-4 bg-slate-50/50 dark:bg-slate-900/50 space-y-2 text-sm">
+                                                    <div className="flex justify-between text-slate-600">
+                                                        <span>Gross Fees</span>
+                                                        <span>{formatMoney(Number(selectedChallan.gross_amount))}</span>
+                                                    </div>
+                                                    {Number(selectedChallan.discount_amount) > 0 && (
+                                                        <div className="flex justify-between text-emerald-600">
+                                                            <span>Student Concession ({selectedChallan.discount_title ?? 'Approved Concession'})</span>
+                                                            <span>-{formatMoney(Number(selectedChallan.discount_amount))}</span>
+                                                        </div>
+                                                    )}
+                                                    {Number(selectedChallan.adjustment_amount || 0) > 0 && (
+                                                        <div className="flex justify-between text-indigo-600 font-medium">
+                                                            <span>Post-Issue Collection Adjustments</span>
+                                                            <span>-{formatMoney(Number(selectedChallan.adjustment_amount))}</span>
+                                                        </div>
+                                                    )}
+                                                    <div className="flex justify-between font-semibold border-t border-slate-200 dark:border-slate-800 pt-1.5">
+                                                        <span>Net Obligation</span>
+                                                        <span>{formatMoney(Number(selectedChallan.total_payable))}</span>
+                                                    </div>
+                                                    <div className="flex justify-between text-slate-600">
+                                                        <span>Already Paid</span>
+                                                        <span className="text-emerald-600 font-medium">{formatMoney(Number(selectedChallan.paid_amount))}</span>
+                                                    </div>
+                                                    <div className="flex justify-between font-bold text-base border-t border-slate-200 dark:border-slate-800 pt-1.5 text-red-600">
+                                                        <span>Outstanding Balance</span>
+                                                        <span className={currentBalance === 0 ? 'text-emerald-600' : ''}>{formatMoney(currentBalance)}</span>
+                                                    </div>
+
+                                                    <div className="flex items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-slate-800 flex-wrap">
+                                                        {canAdjust && currentBalance > 0 && (
+                                                            <Button
+                                                                type="button"
+                                                                variant="outline"
+                                                                size="sm"
+                                                                onClick={openAdjustmentModal}
+                                                                className="text-xs text-indigo-600 border-indigo-200 hover:bg-indigo-50 dark:hover:bg-indigo-950 inline-flex items-center gap-1.5"
+                                                            >
+                                                                <PlusCircle className="w-3.5 h-3.5" /> Apply One-Time Adjustment
+                                                            </Button>
+                                                        )}
+                                                        {student && (
+                                                            <Link
+                                                                href={`/school/students/${student.id}?tab=fees`}
+                                                                className="text-xs text-slate-500 hover:text-indigo-600 underline ml-auto inline-flex items-center gap-1"
+                                                            >
+                                                                Manage Student Concession
+                                                            </Link>
+                                                        )}
                                                     </div>
                                                 </div>
-                                            </div>
+                                            )}
 
-                                            {/* Payment Date & Method */}
-                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                                <div className="space-y-1.5">
-                                                    <Label>Payment Date <span className="text-red-500">*</span></Label>
-                                                    <Input
-                                                        type="date"
-                                                        value={data.payment_date}
-                                                        onChange={e => setData('payment_date', e.target.value)}
-                                                    />
-                                                    {errors.payment_date && <p className="text-xs text-red-500">{errors.payment_date}</p>}
+                                            {selectedChallan && currentBalance <= 0 && (
+                                                <div className={`rounded-lg p-4 text-sm flex items-center justify-between gap-4 border ${
+                                                    Number(selectedChallan.paid_amount) === 0 && Number(selectedChallan.adjustment_amount || 0) > 0
+                                                        ? 'bg-purple-50 border-purple-200 text-purple-900 dark:bg-purple-950/30 dark:border-purple-800 dark:text-purple-200'
+                                                        : Number(selectedChallan.paid_amount) > 0 && Number(selectedChallan.adjustment_amount || 0) > 0
+                                                            ? 'bg-teal-50 border-teal-200 text-teal-900 dark:bg-teal-950/30 dark:border-teal-800 dark:text-teal-200'
+                                                            : 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                                                }`}>
+                                                    <div className="flex items-center gap-2">
+                                                        <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+                                                        <div>
+                                                            <p className="font-semibold">
+                                                                {Number(selectedChallan.paid_amount) === 0 && Number(selectedChallan.adjustment_amount || 0) > 0
+                                                                    ? 'This challan has been fully cleared via adjustment (Settled — Adjusted / Waived).'
+                                                                    : Number(selectedChallan.paid_amount) > 0 && Number(selectedChallan.adjustment_amount || 0) > 0
+                                                                        ? 'This challan has been fully settled through payments and adjustments (Settled — Paid + Adjusted).'
+                                                                        : 'This challan has been fully paid.'}
+                                                            </p>
+                                                            <p className="text-xs mt-0.5 opacity-90">
+                                                                Outstanding balance is PKR 0.00. No cash payment is due.
+                                                            </p>
+                                                        </div>
+                                                    </div>
+                                                    <Link href={`/school/fees/challans/${selectedChallan.id}`}>
+                                                        <Button type="button" size="sm" variant="outline" className="text-xs bg-white dark:bg-slate-900">View Challan</Button>
+                                                    </Link>
                                                 </div>
+                                            )}
 
-                                                <div className="space-y-1.5">
-                                                    <Label>Payment Method <span className="text-red-500">*</span></Label>
-                                                    <Select value={data.method} onValueChange={v => setData('method', v ?? 'cash')}>
-                                                        <SelectTrigger><SelectValue /></SelectTrigger>
-                                                        <SelectContent>
-                                                            <SelectItem value="cash">Cash</SelectItem>
-                                                            <SelectItem value="card">Debit / Credit Card</SelectItem>
-                                                            <SelectItem value="online">Online Transfer</SelectItem>
-                                                            <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
-                                                            <SelectItem value="cheque">Cheque</SelectItem>
-                                                            <SelectItem value="other">Other</SelectItem>
-                                                        </SelectContent>
-                                                    </Select>
-                                                    {errors.method && <p className="text-xs text-red-500">{errors.method}</p>}
-                                                </div>
-                                            </div>
+                                            {/* Collection Input (Only when challan is selected and balance > 0) */}
+                                            {selectedChallan && currentBalance > 0 && (
+                                                <>
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                                        <div className="space-y-1.5">
+                                                            <Label>Amount Receiving ({currency}) <span className="text-red-500">*</span></Label>
+                                                            <Input
+                                                                type="number"
+                                                                min="0.01"
+                                                                step="0.01"
+                                                                value={data.amount_paid}
+                                                                onChange={e => setData('amount_paid', e.target.value)}
+                                                                className={isOverpaying ? 'border-red-500 focus-visible:ring-red-500' : ''}
+                                                            />
+                                                            {errors.amount_paid && <p className="text-xs text-red-500">{errors.amount_paid}</p>}
+                                                            {isOverpaying && (
+                                                                <p className="text-xs text-red-500 font-medium">Cannot overpay. Maximum receivable is {formatMoney(currentBalance)}.</p>
+                                                            )}
+                                                        </div>
 
-                                            {/* Reference & Notes */}
-                                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                                <div className="space-y-1.5">
-                                                    <Label>Cheque / Transaction Reference</Label>
-                                                    <Input
-                                                        placeholder="e.g. Cheque #84920 or Online Ref"
-                                                        value={data.reference}
-                                                        onChange={e => setData('reference', e.target.value)}
-                                                    />
-                                                    {errors.reference && <p className="text-xs text-red-500">{errors.reference}</p>}
-                                                </div>
-                                                <div className="space-y-1.5">
-                                                    <Label>Administrative Note</Label>
-                                                    <Input
-                                                        placeholder="Optional remarks"
-                                                        value={data.note}
-                                                        onChange={e => setData('note', e.target.value)}
-                                                    />
-                                                </div>
-                                            </div>
+                                                        <div className="space-y-1.5">
+                                                            <Label>Remaining Balance After Payment</Label>
+                                                            <div className={`h-10 rounded-md border px-3 flex items-center font-semibold text-sm ${postBalance > 0 ? 'text-red-600 border-red-200 bg-red-50/50' : 'text-emerald-600 border-emerald-200 bg-emerald-50/50'}`}>
+                                                                {postBalance > 0 ? formatMoney(postBalance) : 'Fully Cleared'}
+                                                            </div>
+                                                        </div>
+                                                    </div>
 
-                                            <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
-                                                <Link href="/school/fees/outstanding">
-                                                    <Button type="button" variant="ghost">Cancel</Button>
-                                                </Link>
-                                                <Button
-                                                    type="submit"
-                                                    disabled={processing || isOverpaying || payingNum <= 0}
-                                                    className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium inline-flex items-center gap-2"
-                                                >
-                                                    <CheckCircle2 className="w-4 h-4" />
-                                                    {processing ? 'Recording...' : 'Record Payment & Print Receipt'}
-                                                </Button>
-                                            </div>
+                                                    {/* Payment Date & Method */}
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                                        <div className="space-y-1.5">
+                                                            <Label>Payment Date <span className="text-red-500">*</span></Label>
+                                                            <Input
+                                                                type="date"
+                                                                value={data.payment_date}
+                                                                onChange={e => setData('payment_date', e.target.value)}
+                                                            />
+                                                            {errors.payment_date && <p className="text-xs text-red-500">{errors.payment_date}</p>}
+                                                        </div>
+
+                                                        <div className="space-y-1.5">
+                                                            <Label>Payment Method <span className="text-red-500">*</span></Label>
+                                                            <Select value={data.method} onValueChange={v => setData('method', v ?? 'cash')}>
+                                                                <SelectTrigger><SelectValue /></SelectTrigger>
+                                                                <SelectContent>
+                                                                    <SelectItem value="cash">Cash</SelectItem>
+                                                                    <SelectItem value="card">Debit / Credit Card</SelectItem>
+                                                                    <SelectItem value="online">Online Transfer</SelectItem>
+                                                                    <SelectItem value="bank_transfer">Bank Transfer</SelectItem>
+                                                                    <SelectItem value="cheque">Cheque</SelectItem>
+                                                                    <SelectItem value="other">Other</SelectItem>
+                                                                </SelectContent>
+                                                            </Select>
+                                                            {errors.method && <p className="text-xs text-red-500">{errors.method}</p>}
+                                                        </div>
+                                                    </div>
+
+                                                    {/* Reference & Notes */}
+                                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                                        <div className="space-y-1.5">
+                                                            <Label>Cheque / Transaction Reference</Label>
+                                                            <Input
+                                                                placeholder="e.g. Cheque #84920 or Online Ref"
+                                                                value={data.reference}
+                                                                onChange={e => setData('reference', e.target.value)}
+                                                            />
+                                                            {errors.reference && <p className="text-xs text-red-500">{errors.reference}</p>}
+                                                        </div>
+                                                        <div className="space-y-1.5">
+                                                            <Label>Administrative Note</Label>
+                                                            <Input
+                                                                placeholder="Optional remarks"
+                                                                value={data.note}
+                                                                onChange={e => setData('note', e.target.value)}
+                                                            />
+                                                        </div>
+                                                    </div>
+
+                                                    <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 dark:border-slate-800">
+                                                        <Link href="/school/fees/outstanding">
+                                                            <Button type="button" variant="ghost">Cancel</Button>
+                                                        </Link>
+                                                        <Button
+                                                            type="submit"
+                                                            disabled={processing || isOverpaying || payingNum <= 0 || !data.fee_challan_id || !selectedChallan}
+                                                            className="bg-indigo-600 hover:bg-indigo-700 text-white font-medium inline-flex items-center gap-2"
+                                                        >
+                                                            <CheckCircle2 className="w-4 h-4" />
+                                                            {processing ? 'Recording...' : 'Record Payment & Print Receipt'}
+                                                        </Button>
+                                                    </div>
+                                                </>
+                                            )}
                                         </>
                                     )}
                                 </form>

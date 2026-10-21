@@ -178,24 +178,49 @@ class FeePaymentController extends Controller
             $request->merge(['fee_challan_id' => $request->input('challan_id')]);
         }
 
-        $isModernPayment = ! empty($request->input('fee_challan_id'));
+        $studentId = $request->input('student_id');
+        $hasChallanKey = $request->has('fee_challan_id') || $request->has('challan_id');
+        $hasIdempotencyKey = $request->filled('idempotency_key');
 
-        $data = $request->validate([
+        $hasPayableChallans = false;
+        if ($studentId && is_numeric($studentId)) {
+            $hasPayableChallans = FeeChallan::where('school_id', $sid)
+                ->where('student_id', $studentId)
+                ->whereIn('status', ['unpaid', 'partial'])
+                ->exists();
+        }
+
+        // Modern collection invariant: fee_challan_id is strictly required when:
+        // 1. The student has payable challans, OR
+        // 2. The request includes fee_challan_id / challan_id key, OR
+        // 3. The request includes an idempotency key (modern collection UI)
+        $isModernPayment = $hasChallanKey || $hasIdempotencyKey || $hasPayableChallans;
+
+        $rules = [
             'student_id'       => ['required', SchoolExists::make('students', 'id', $sid)],
-            'fee_challan_id'   => ['nullable', SchoolExists::make('fee_challans', 'id', $sid)],
             'fee_structure_id' => ['nullable', SchoolExists::make('fee_structures', 'id', $sid)],
             'amount_paid'      => 'required|numeric|min:0.01',
             'payment_date'     => 'required|date',
             'method'           => 'required|string|in:cash,card,online,bank_transfer,cheque,bkash,nagad,rocket,other',
             'reference'        => 'nullable|string|max:100',
             'note'             => 'nullable|string|max:500',
-            'idempotency_key'  => $isModernPayment
-                ? ['required', 'string', 'uuid', 'max:64']
-                : ['nullable', 'string', 'max:64'],
-        ], [
+        ];
+
+        if ($isModernPayment) {
+            $rules['fee_challan_id']  = ['required', SchoolExists::make('fee_challans', 'id', $sid)];
+            $rules['idempotency_key'] = ['required', 'string', 'uuid', 'max:64'];
+        } else {
+            $rules['fee_challan_id']  = ['nullable', SchoolExists::make('fee_challans', 'id', $sid)];
+            $rules['idempotency_key'] = ['nullable', 'string', 'max:64'];
+        }
+
+        $messages = [
+            'fee_challan_id.required'  => 'Please select an active fee challan to record payment.',
             'idempotency_key.required' => 'An idempotency key is required for challan fee payments.',
             'idempotency_key.uuid'     => 'The idempotency key must be a valid UUID.',
-        ]);
+        ];
+
+        $data = $request->validate($rules, $messages);
 
         $idempotencyKey = $data['idempotency_key'] ?? null;
         if ($idempotencyKey) {

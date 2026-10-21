@@ -3,7 +3,42 @@
 All meaningful product changes, enhancements, fixes and production releases
 are recorded here.
 
-## [2026-10-15 23:42 PKT] — Phase 3C Multi-Word Search Normalization
+## [2026-10-21 20:28 PKT] — Phase 4A Fee Collection Integrity & Receipt Printing
+
+**Module:** Fee Payments / School Admin / Receipts<br>
+**Status:** Committed<br>
+**Commit:** Uncommitted<br>
+
+### Fixed
+- **Modern Fee Collection Invariant & NULL-Challan Elimination (`FeePaymentController::store`):**
+  - Enforced strict backend validation requiring a valid, active `fee_challan_id` whenever a student has payable challans or when modern collection params are submitted.
+  - Eliminated silent creation of orphaned `FeePayment` rows (`fee_challan_id = NULL`) when outstanding student obligations exist.
+  - Enforced required UUID `idempotency_key` on challan-based collections to eliminate duplicate financial transactions.
+  - Preserved backward compatibility for historical non-challan standalone structures only when no active challan obligations exist.
+- **Frontend Collection State Leak & Multi-Challan Selection UX (`Collect.tsx`):**
+  - Hardened student switching lifecycle with strict `useEffect` reset preventing stale `fee_challan_id`, `amount_paid`, or selected challan metadata leaking from previously viewed students.
+  - Implemented explicit UX handling for 0, 1, and 2+ payable challans:
+    - **0 Payable Challans:** Displays a prominent informational banner and hides/disables collection inputs and submission buttons.
+    - **1 Payable Challan:** Safely pre-selects the sole challan, populates outstanding balance, and keeps amount editable for partial collections.
+    - **2+ Payable Challans:** Requires explicit administrator selection from a dropdown before obligation breakdown or payment submission is enabled.
+- **Receipt Print Media Isolation (`Receipt.tsx`):**
+  - Replaced non-existent `no-print` classes with Tailwind `print:hidden` on navigation, buttons, and app shells.
+  - Implemented scoped `@media print` CSS isolating `#receipt-print-area` in fixed full-page layout while hiding parent layout shells (`body * { visibility: hidden }`, `#receipt-print-area, #receipt-print-area * { visibility: visible }`).
+  - Preserved existing official receipt visual design and layout without altering invoice templates or introducing unnecessary server PDF dependencies.
+
+### Added
+- **Automated Regression & Acceptance Matrix (`FeeCollectionIntegrityPhase4ATest.php`):**
+  - Added 8 end-to-end feature tests (80 assertions) covering:
+    - Missing challan ID strict rejection (422) with zero financial mutations.
+    - Student-challan mismatch rejection before transaction write.
+    - Cross-school tenant isolation rejection.
+    - Voided challan payment rejection.
+    - Partial collection and subsequent full settlement with ledger consistency.
+    - Idempotency replay verification with zero duplicate ledger rows.
+    - Multi-challan UI prop presentation without silent auto-selection.
+    - Official receipt isolated show endpoint structure.
+- **Live Headless Browser Acceptance Verification:**
+  - Automated acceptance test using Chromium DevTools Protocol (CDP) verifying real DOM rendering, zero-challan banner, multi-challan selection prompt, student state isolation, partial payment submission, redirect to `/school/fees/payments/{id}`, receipt display, and CSS `@media print` PDF generation.
 
 **Module:** Core / Search & Normalization / Tenant Scoping<br>
 **Status:** Production (Deployed 2026-10-15 23:59 PKT)<br>

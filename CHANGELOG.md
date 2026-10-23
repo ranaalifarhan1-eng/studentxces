@@ -3,6 +3,53 @@
 All meaningful product changes, enhancements, fixes and production releases
 are recorded here.
 
+## [2026-10-23 18:40 PKT] — Phase 4C Reports Reliability Fix, Export Scalability & UI Completeness (BUG-03)
+
+**Module:** Reports / School Admin / Exports / UI Scalability<br>
+**Status:** Local / Uncommitted<br>
+**Commit:** Uncommitted<br>
+
+### Fixed
+- **Attendance PDF Export HTTP 500 & Silent Truncation (BUG-3A):**
+  - Resolved `RelationNotFoundException` and missing column crash in `ReportController::exportAttendancePdf` by replacing non-existent `student` and `schoolClass` relations with canonical polymorphic relation `attendable` scoped to `attendable_type = 'App\Models\Student'`.
+  - Updated PDF view `resources/views/reports/attendance.blade.php` to access student details through `$rec->attendable` (`$rec->attendable?->first_name`, `$rec->attendable?->admission_no`, `$rec->attendable?->schoolClass?->name`).
+  - Added filter normalization (`normalizeFilter`) for `class_id` and `status` (`'all'`, empty string, null).
+  - Enforced tenant scoping on class filter to prevent cross-school attendance data leakage.
+  - Eliminated silent `->limit(500)` truncation cap on `exportAttendancePdf`, allowing complete filtered attendance report exports up to 1,000 records without silent row drops.
+- **Attendance PDF Large-Export Pre-Render Safety Guard (OOM Prevention):**
+  - Benchmarked Dompdf memory consumption on landscape attendance reports: 525 rows (154 MB, 6.5s), 1,000 rows (336 MB, 20.3s), and 1,500 rows (fatal 512 MB memory exhaustion in `dompdf/src/Css/Style.php`).
+  - Implemented an evidence-based pre-render safety guard counting records prior to Dompdf instantiation. If records exceed 1,000 rows, a user-friendly validation response is returned advising the user to narrow filters or export CSV, eliminating PHP fatal OOM crashes while guaranteeing complete exports up to 1,000 records.
+- **Custom Report Builder Attendance Entity HTTP 500 (BUG-3B):**
+  - Resolved crash in `ReportController::runCustomReport` for entity `attendance` by replacing non-existent relationship calls with database-side `whereHasMorph('attendable', [Student::class], fn($sq) => $sq->where('class_id', $f['class_id']))` and scoping to `Student::class`.
+  - Mapped attendance output collection to clean, flat associative records (`id`, `date`, `student_name`, `admission_no`, `class`, `status`, `remarks`), eliminating serialized object clutter and ensuring instant table rendering and CSV export compatibility.
+- **Custom Report Builder UI Completeness & Truncation Transparency:**
+  - Audited pre-existing 500-record query cap in `runCustomReport`.
+  - Updated `runCustomReport` to return explicit completeness metadata: `total_count` (exact matching records in database), `returned_count` (in-memory rows capped at 500 for DOM safety), and `is_truncated` (`total_count > returned_count`).
+  - Updated `CustomBuilder.tsx` to render all 500 fetched rows in table view and display an amber completeness alert banner and header notice (`Showing first 500 of X matching records. Export CSV for the complete dataset.`) with a direct 1-click CSV download action.
+  - Ensured CSV export streams all matching rows without any 500-record cap via `is_export` query parameter.
+- **Custom Report Builder "All Classes" HTTP 422 (BUG-3C):**
+  - Resolved HTTP 422 Unprocessable Entity error when selecting "All" classes by normalizing `filters.class_id` and `filters.status` (`'all'`, empty string, null -> `null`) defensively in backend `ReportController::runCustomReport` prior to `SchoolExists` validation.
+  - Sanitized frontend filter payload in `CustomBuilder.tsx` (`run()` and `exportCsv()`) to pass `undefined` / empty string instead of literal `"all"`.
+- **Attendance Report "All" Filter Empty-Result Bug (BUG-3D):**
+  - Resolved empty result set on `/school/reports/attendance` when class or status is set to "All" by normalizing incoming query parameters before applying database filters.
+  - Updated frontend `Attendance.tsx` (`applyFilter()` and `exportPdf()`) to sanitize `"all"` values.
+
+### Added
+- **Custom Report Builder CSV Export Filter Propagation:**
+  - Enabled flat query parameter normalization in `ReportController::exportCsv` so query parameters (`class_id`, `from_date`, `to_date`, `status`) are automatically ingested into `filters` array when generating custom report CSV exports.
+- **Automated Regression Test Suite (`ReportReliabilityPhase4CTest.php`):**
+  - Created 10 comprehensive automated feature tests (127 assertions) verifying:
+    - Attendance PDF export succeeds with HTTP 200 and `application/pdf` header on canonical route `/school/reports/attendance/export-pdf`.
+    - Custom Report Builder attendance entity succeeds with HTTP 200 and expected flat JSON structure.
+    - Custom Report Builder handles `"all"` class filter without HTTP 422 across attendance and students entities.
+    - Attendance report page with `"all"` class and status returns records without returning empty set.
+    - Specific class and status filtering works accurately in both attendance report and custom report builder.
+    - Tenant isolation is strictly enforced across attendance reports and exports (cross-school class IDs yield 0 records or validation rejection).
+    - Staff attendance records sharing `attendances` table are strictly excluded from student attendance reports and exports.
+    - CSV export generates properly formatted CSV with correct column headers and student data.
+    - Completeness export verification: datasets >500 records (e.g. 525 rows) export all rows in PDF and CSV without silent truncation, and custom report JSON exposes `total_count`, `returned_count`, and `is_truncated`.
+    - Attendance PDF pre-render safety guard: queries exceeding 1,000 records return a user-facing validation message without HTTP 500 or PHP OOM, while CSV export on the same dataset downloads all records completely.
+
 ## [2026-10-23 12:15 PKT] — Phase 4B Payroll Pay Action Route Alignment & Authorization Hardening
 
 **Module:** Payroll / Human Resources / School Admin / RBAC<br>

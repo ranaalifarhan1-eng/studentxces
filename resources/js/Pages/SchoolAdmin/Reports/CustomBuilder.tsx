@@ -25,32 +25,51 @@ export default function CustomBuilder({ classes, subjects }: Props) {
     const [toDate, setToDate]     = useState('');
     const [status, setStatus]     = useState('');
     const [loading, setLoading]   = useState(false);
-    const [results, setResults]   = useState<Record<string, unknown>[]>([]);
-    const [count, setCount]       = useState(0);
+    const [results, setResults]       = useState<Record<string, unknown>[]>([]);
+    const [count, setCount]           = useState(0);
+    const [totalCount, setTotalCount] = useState<number | null>(null);
+    const [isTruncated, setIsTruncated] = useState(false);
 
     async function run() {
         setLoading(true);
         try {
+            const cleanClass = (!classId || classId === 'all') ? undefined : classId;
+            const cleanStatus = (!status || status === 'all') ? undefined : status;
             const res = await axios.post('/school/reports/custom/run', {
                 entity,
                 filters: {
-                    class_id:  classId  || undefined,
+                    class_id:  cleanClass,
                     from_date: fromDate || undefined,
                     to_date:   toDate   || undefined,
-                    status:    status   || undefined,
+                    status:    cleanStatus,
                 },
             });
-            setResults(res.data.data ?? []);
-            setCount(res.data.count ?? 0);
+            const data = res.data.data ?? [];
+            const retCount = res.data.returned_count ?? res.data.count ?? data.length;
+            const totCount = res.data.total_count ?? res.data.count ?? retCount;
+            setResults(data);
+            setCount(retCount);
+            setTotalCount(totCount);
+            setIsTruncated(Boolean(res.data.is_truncated));
         } catch {
             setResults([]);
+            setCount(0);
+            setTotalCount(null);
+            setIsTruncated(false);
         } finally {
             setLoading(false);
         }
     }
 
     function exportCsv() {
-        const q = new URLSearchParams({ entity, class_id: classId, from_date: fromDate, to_date: toDate, status }).toString();
+        const cleanClass = (!classId || classId === 'all') ? '' : classId;
+        const cleanStatus = (!status || status === 'all') ? '' : status;
+        const params: Record<string, string> = { entity };
+        if (cleanClass) params.class_id = cleanClass;
+        if (fromDate) params.from_date = fromDate;
+        if (toDate) params.to_date = toDate;
+        if (cleanStatus) params.status = cleanStatus;
+        const q = new URLSearchParams(params).toString();
         window.open('/school/reports/custom/export-csv?' + q);
     }
 
@@ -79,7 +98,7 @@ export default function CustomBuilder({ classes, subjects }: Props) {
                             <Label>Entity *</Label>
                             <div className="flex flex-wrap gap-2 mt-2">
                                 {(Object.keys(entityLabels) as Entity[]).map(e => (
-                                    <button key={e} type="button" onClick={() => { setEntity(e); setResults([]); }}
+                                    <button key={e} type="button" onClick={() => { setEntity(e); setResults([]); setCount(0); setTotalCount(null); setIsTruncated(false); }}
                                         className={`px-4 py-2 rounded-lg text-sm font-medium border transition-colors ${entity === e ? 'border-indigo-500 bg-indigo-50 dark:bg-indigo-950/40 text-indigo-700 dark:text-indigo-300' : 'border-slate-200 dark:border-slate-700'}`}>
                                         {entityLabels[e]}
                                     </button>
@@ -138,8 +157,21 @@ export default function CustomBuilder({ classes, subjects }: Props) {
                 {results.length > 0 && (
                     <Card>
                         <CardHeader>
-                            <CardTitle>{entityLabels[entity]} — {count} records</CardTitle>
+                            <CardTitle>
+                                {entityLabels[entity]} — {isTruncated && totalCount !== null ? `Showing first ${count} of ${totalCount.toLocaleString()} matching records` : `${count} records`}
+                            </CardTitle>
                         </CardHeader>
+                        {isTruncated && totalCount !== null && (
+                            <div className="bg-amber-50 dark:bg-amber-950/30 border-y border-amber-200 dark:border-amber-800/40 px-6 py-3 text-xs text-amber-800 dark:text-amber-200 flex flex-wrap items-center justify-between gap-2">
+                                <div className="flex items-center gap-1.5 font-medium">
+                                    <Info className="w-4 h-4 text-amber-600 dark:text-amber-400 shrink-0" />
+                                    <span>Showing first {count} of {totalCount.toLocaleString()} matching records. Export CSV for the complete dataset.</span>
+                                </div>
+                                <Button size="sm" variant="outline" onClick={exportCsv} className="h-7 text-xs gap-1 border-amber-300 dark:border-amber-700 bg-white dark:bg-slate-900">
+                                    <Download className="w-3 h-3" /> Export CSV
+                                </Button>
+                            </div>
+                        )}
                         <CardContent className="p-0 overflow-x-auto">
                             <Table>
                                 <TableHeader>
@@ -148,7 +180,7 @@ export default function CustomBuilder({ classes, subjects }: Props) {
                                     </TableRow>
                                 </TableHeader>
                                 <TableBody>
-                                    {results.slice(0, 100).map((row, i) => (
+                                    {results.map((row, i) => (
                                         <TableRow key={i}>
                                             {headers.map(h => (
                                                 <TableCell key={h} className="text-sm">{flatVal(row, h)}</TableCell>
@@ -157,9 +189,9 @@ export default function CustomBuilder({ classes, subjects }: Props) {
                                     ))}
                                 </TableBody>
                             </Table>
-                            {count > 100 && (
-                                <p className="text-xs text-slate-400 px-4 py-2 flex items-center gap-1">
-                                    <Info className="w-3 h-3" /> Showing first 100 rows. Export CSV for full data.
+                            {isTruncated && totalCount !== null && (
+                                <p className="text-xs text-amber-700 dark:text-amber-400 px-4 py-2.5 flex items-center gap-1.5 bg-amber-50/50 dark:bg-amber-950/20 border-t border-amber-200 dark:border-amber-800/40">
+                                    <Info className="w-3.5 h-3.5 shrink-0" /> Showing first {count} of {totalCount.toLocaleString()} matching records. Export CSV for the complete dataset.
                                 </p>
                             )}
                         </CardContent>

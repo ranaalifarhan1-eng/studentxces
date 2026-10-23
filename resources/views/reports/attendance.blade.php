@@ -31,11 +31,14 @@
     </thead>
     <tbody>
         @foreach($records as $i => $rec)
+        @php
+            $student = $rec->attendable;
+        @endphp
         <tr>
             <td>{{ $i + 1 }}</td>
-            <td>{{ $rec->student?->first_name }} {{ $rec->student?->last_name }}</td>
-            <td>{{ $rec->student?->admission_no }}</td>
-            <td>{{ $rec->schoolClass?->name }}</td>
+            <td>{{ $student ? trim(($student->first_name ?? '') . ' ' . ($student->last_name ?? '')) : '—' }}</td>
+            <td>{{ $student?->admission_no ?? '—' }}</td>
+            <td>{{ $student?->schoolClass?->name ?? '—' }}</td>
             <td>{{ \Carbon\Carbon::parse($rec->date)->format('d M Y') }}</td>
             <td class="{{ $rec->status }}">{{ ucfirst($rec->status) }}</td>
         </tr>

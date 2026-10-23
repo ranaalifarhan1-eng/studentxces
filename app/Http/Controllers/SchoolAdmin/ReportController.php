@@ -127,18 +127,41 @@ class ReportController extends Controller
 
     // ── Attendance Report ─────────────────────────────────────────
 
+    private function normalizeFilter(mixed $val): ?string
+    {
+        if ($val === null) {
+            return null;
+        }
+        $str = trim((string) $val);
+        if ($str === '' || strtolower($str) === 'all') {
+            return null;
+        }
+        return $str;
+    }
+
     public function attendance(Request $request)
     {
         $sid = $this->getSchoolId();
 
-        $query = Attendance::with(['attendable.schoolClass:id,name'])
-            ->where('school_id', $sid)
+        $classId = $this->normalizeFilter($request->class_id);
+        $status  = $this->normalizeFilter($request->status);
+
+        if ($classId) {
+            $validClass = SchoolClass::where('school_id', $sid)->where('id', $classId)->exists();
+            if (! $validClass) {
+                $classId = -1;
+            }
+        }
+
+        $query = Attendance::where('school_id', $sid)
+            ->where('attendable_type', Student::class)
+            ->with(['attendable.schoolClass:id,name'])
             ->when($request->from_date, fn ($q) => $q->whereDate('date', '>=', $request->from_date))
             ->when($request->to_date,   fn ($q) => $q->whereDate('date', '<=', $request->to_date))
-            ->when($request->status,    fn ($q) => $q->where('status', $request->status))
-            ->when($request->class_id, fn ($q) => $q->whereHasMorph(
-                'attendable', [\App\Models\Student::class],
-                fn ($sq) => $sq->where('class_id', $request->class_id)
+            ->when($status,             fn ($q) => $q->where('status', $status))
+            ->when($classId,            fn ($q) => $q->whereHasMorph(
+                'attendable', [Student::class],
+                fn ($sq) => $sq->where('class_id', $classId)
             ));
 
         $records = $query->latest('date')->paginate(50)->withQueryString()
@@ -171,11 +194,12 @@ class ReportController extends Controller
             });
 
         $summary = Attendance::where('school_id', $sid)
+            ->where('attendable_type', Student::class)
             ->when($request->from_date, fn ($q) => $q->whereDate('date', '>=', $request->from_date))
             ->when($request->to_date,   fn ($q) => $q->whereDate('date', '<=', $request->to_date))
-            ->when($request->class_id, fn ($q) => $q->whereHasMorph(
-                'attendable', [\App\Models\Student::class],
-                fn ($sq) => $sq->where('class_id', $request->class_id)
+            ->when($classId,            fn ($q) => $q->whereHasMorph(
+                'attendable', [Student::class],
+                fn ($sq) => $sq->where('class_id', $classId)
             ))
             ->selectRaw('status, count(*) as total')
             ->groupBy('status')
@@ -185,7 +209,12 @@ class ReportController extends Controller
             'records' => $records,
             'summary' => $summary,
             'classes' => SchoolClass::where('school_id', $sid)->orderBy('numeric_name')->get(['id', 'name']),
-            'filters' => $request->only('class_id', 'from_date', 'to_date', 'status'),
+            'filters' => [
+                'class_id'  => $classId,
+                'from_date' => $request->from_date,
+                'to_date'   => $request->to_date,
+                'status'    => $status,
+            ],
         ]);
     }
 
@@ -294,6 +323,19 @@ class ReportController extends Controller
     {
         $sid = $this->getSchoolId();
 
+        if ($request->has('filters')) {
+            $filters = $request->input('filters');
+            if (is_array($filters)) {
+                if (array_key_exists('class_id', $filters)) {
+                    $filters['class_id'] = $this->normalizeFilter($filters['class_id']);
+                }
+                if (array_key_exists('status', $filters)) {
+                    $filters['status'] = $this->normalizeFilter($filters['status']);
+                }
+                $request->merge(['filters' => $filters]);
+            }
+        }
+
         $data = $request->validate([
             'entity'            => 'required|in:students,attendance,marks,fees,staff',
             'filters'           => 'nullable|array',
@@ -303,45 +345,109 @@ class ReportController extends Controller
             'filters.status'    => 'nullable|string',
         ]);
 
-        $entity = $data['entity'];
-        $f      = $data['filters'] ?? [];
+        $entity   = $data['entity'];
+        $f        = $data['filters'] ?? [];
+        $isExport = $request->boolean('is_export');
 
-        $results = match ($entity) {
-            'students'   => Student::withoutGlobalScopes()
-                ->where('school_id', $sid)
-                ->when($f['class_id'] ?? null, fn ($q) => $q->where('class_id', $f['class_id']))
-                ->with('schoolClass:id,name')
-                ->get(['id', 'first_name', 'last_name', 'admission_no', 'class_id', 'gender', 'status']),
+        [$results, $totalCount] = match ($entity) {
+            'students' => (function () use ($sid, $f, $isExport) {
+                $q = Student::withoutGlobalScopes()
+                    ->where('school_id', $sid)
+                    ->when($f['class_id'] ?? null, fn ($sq) => $sq->where('class_id', $f['class_id']));
+                $total = (clone $q)->count();
+                $res = $q->with('schoolClass:id,name')
+                    ->when(! $isExport, fn ($sq) => $sq->limit(500))
+                    ->get(['id', 'first_name', 'last_name', 'admission_no', 'class_id', 'gender', 'status']);
+                return [$res, $total];
+            })(),
 
-            'attendance' => Attendance::where('school_id', $sid)
-                ->when($f['class_id'] ?? null,  fn ($q) => $q->where('class_id', $f['class_id']))
-                ->when($f['from_date'] ?? null,  fn ($q) => $q->whereDate('date', '>=', $f['from_date']))
-                ->when($f['to_date'] ?? null,    fn ($q) => $q->whereDate('date', '<=', $f['to_date']))
-                ->when($f['status'] ?? null,     fn ($q) => $q->where('status', $f['status']))
-                ->with('student:id,first_name,last_name,admission_no')
-                ->latest('date')->limit(500)->get(),
+            'attendance' => (function () use ($sid, $f, $isExport) {
+                $q = Attendance::where('school_id', $sid)
+                    ->where('attendable_type', Student::class)
+                    ->when($f['class_id'] ?? null, fn ($sq) => $sq->whereHasMorph(
+                        'attendable', [Student::class],
+                        fn ($ssq) => $ssq->where('class_id', $f['class_id'])
+                    ))
+                    ->when($f['from_date'] ?? null,  fn ($sq) => $sq->whereDate('date', '>=', $f['from_date']))
+                    ->when($f['to_date'] ?? null,    fn ($sq) => $sq->whereDate('date', '<=', $f['to_date']))
+                    ->when($f['status'] ?? null,     fn ($sq) => $sq->where('status', $f['status']));
+                $total = (clone $q)->count();
+                $res = $q->with(['attendable.schoolClass:id,name'])
+                    ->latest('date')
+                    ->when(! $isExport, fn ($sq) => $sq->limit(500))
+                    ->get()
+                    ->map(function ($a) {
+                        $attendable = $a->attendable;
+                        $name = '—';
+                        $admissionNo = null;
+                        $className   = null;
 
-            'marks'      => Mark::whereHas('student', fn ($q) => $q->where('school_id', $sid))
-                ->when($f['class_id'] ?? null,  fn ($q) => $q->whereHas('student', fn ($s) => $s->where('class_id', $f['class_id'])))
-                ->with(['student:id,first_name,last_name,admission_no', 'subject:id,name', 'exam:id,name'])
-                ->limit(500)->get(),
+                        if ($attendable instanceof Student) {
+                            $name = trim($attendable->first_name . ' ' . ($attendable->last_name ?? ''));
+                            $admissionNo = $attendable->admission_no ?? null;
+                            $className   = $attendable->schoolClass?->name;
+                        } elseif ($attendable) {
+                            $name = $attendable->name ?? '—';
+                        }
 
-            'fees'       => FeePayment::where('school_id', $sid)
-                ->when($f['from_date'] ?? null, fn ($q) => $q->whereDate('payment_date', '>=', $f['from_date']))
-                ->when($f['to_date'] ?? null,   fn ($q) => $q->whereDate('payment_date', '<=', $f['to_date']))
-                ->when($f['status'] ?? null,    fn ($q) => $q->where('status', $f['status']))
-                ->with('student:id,first_name,last_name,admission_no')
-                ->latest('payment_date')->limit(500)->get(),
+                        return [
+                            'id'           => $a->id,
+                            'date'         => $a->date,
+                            'student_name' => $name,
+                            'admission_no' => $admissionNo,
+                            'class'        => $className,
+                            'status'       => $a->status,
+                            'remarks'      => $a->remarks,
+                        ];
+                    });
+                return [$res, $total];
+            })(),
 
-            'staff'      => Staff::where('school_id', $sid)
-                ->when($f['status'] ?? null, fn ($q) => $q->where('status', $f['status']))
-                ->with(['department:id,name', 'designation:id,name'])
-                ->get(['id', 'first_name', 'last_name', 'email', 'status', 'department_id', 'designation_id']),
+            'marks' => (function () use ($sid, $f, $isExport) {
+                $q = Mark::whereHas('student', fn ($sq) => $sq->where('school_id', $sid))
+                    ->when($f['class_id'] ?? null,  fn ($sq) => $sq->whereHas('student', fn ($s) => $s->where('class_id', $f['class_id'])));
+                $total = (clone $q)->count();
+                $res = $q->with(['student:id,first_name,last_name,admission_no', 'subject:id,name', 'exam:id,name'])
+                    ->when(! $isExport, fn ($sq) => $sq->limit(500))
+                    ->get();
+                return [$res, $total];
+            })(),
 
-            default => collect(),
+            'fees' => (function () use ($sid, $f, $isExport) {
+                $q = FeePayment::where('school_id', $sid)
+                    ->when($f['from_date'] ?? null, fn ($sq) => $sq->whereDate('payment_date', '>=', $f['from_date']))
+                    ->when($f['to_date'] ?? null,   fn ($sq) => $sq->whereDate('payment_date', '<=', $f['to_date']))
+                    ->when($f['status'] ?? null,    fn ($sq) => $sq->where('status', $f['status']));
+                $total = (clone $q)->count();
+                $res = $q->with('student:id,first_name,last_name,admission_no')
+                    ->latest('payment_date')
+                    ->when(! $isExport, fn ($sq) => $sq->limit(500))
+                    ->get();
+                return [$res, $total];
+            })(),
+
+            'staff' => (function () use ($sid, $f, $isExport) {
+                $q = Staff::where('school_id', $sid)
+                    ->when($f['status'] ?? null, fn ($sq) => $sq->where('status', $f['status']));
+                $total = (clone $q)->count();
+                $res = $q->with(['department:id,name', 'designation:id,name'])
+                    ->when(! $isExport, fn ($sq) => $sq->limit(500))
+                    ->get(['id', 'first_name', 'last_name', 'email', 'status', 'department_id', 'designation_id']);
+                return [$res, $total];
+            })(),
+
+            default => [collect(), 0],
         };
 
-        return response()->json(['data' => $results, 'count' => $results->count()]);
+        $returnedCount = $results->count();
+
+        return response()->json([
+            'data'           => $results,
+            'count'          => $returnedCount,
+            'total_count'    => $totalCount,
+            'returned_count' => $returnedCount,
+            'is_truncated'   => $totalCount > $returnedCount,
+        ]);
     }
 
     // ── Audit Log ─────────────────────────────────────────────────
@@ -380,12 +486,48 @@ class ReportController extends Controller
     public function exportAttendancePdf(Request $request)
     {
         $sid     = $this->getSchoolId();
-        $records = Attendance::with('student:id,first_name,last_name,admission_no', 'schoolClass:id,name')
-            ->where('school_id', $sid)
-            ->when($request->class_id,  fn ($q) => $q->where('class_id', $request->class_id))
+        $classId = $this->normalizeFilter($request->class_id);
+        $status  = $this->normalizeFilter($request->status);
+
+        if ($classId) {
+            $validClass = SchoolClass::where('school_id', $sid)->where('id', $classId)->exists();
+            if (! $validClass) {
+                $classId = -1;
+            }
+        }
+
+        $query = Attendance::where('school_id', $sid)
+            ->where('attendable_type', Student::class)
+            ->with(['attendable.schoolClass:id,name'])
             ->when($request->from_date, fn ($q) => $q->whereDate('date', '>=', $request->from_date))
             ->when($request->to_date,   fn ($q) => $q->whereDate('date', '<=', $request->to_date))
-            ->latest('date')->get();
+            ->when($status,             fn ($q) => $q->where('status', $status))
+            ->when($classId,            fn ($q) => $q->whereHasMorph(
+                'attendable', [Student::class],
+                fn ($sq) => $sq->where('class_id', $classId)
+            ));
+
+        $count = (clone $query)->count();
+        if ($count > 1000) {
+            $message = "This PDF export exceeds the safe limit of 1,000 attendance records (found " . number_format($count) . " records). Please narrow the date range or use CSV export for the complete dataset.";
+            if ($request->hasSession()) {
+                session()->flash('error', $message);
+            }
+            if ($request->header('X-Inertia')) {
+                return back()->with('error', $message);
+            }
+            return response(
+                '<div style="font-family:sans-serif;padding:32px;max-width:640px;margin:50px auto;border:1px solid #fed7aa;background:#fff7ed;color:#9a3412;border-radius:8px;line-height:1.5;">' .
+                '<h2 style="margin-top:0;color:#c2410c;">Export Limit Notice</h2>' .
+                '<p>' . htmlspecialchars($message) . '</p>' .
+                '<p><button onclick="window.close()" style="background:#ea580c;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;font-weight:500;">Close Window</button></p>' .
+                '</div>',
+                200,
+                ['Content-Type' => 'text/html']
+            );
+        }
+
+        $records = $query->latest('date')->get();
 
         $school = School::find($sid);
         $pdf = Pdf::loadView('reports.attendance', compact('records', 'school'))->setPaper('a4', 'landscape');
@@ -410,6 +552,27 @@ class ReportController extends Controller
     public function exportCsv(Request $request)
     {
         $data = $request->validate(['entity' => 'required|in:students,attendance,marks,fees,staff']);
+
+        if (! $request->has('filters')) {
+            $filters = [];
+            if ($request->filled('class_id')) {
+                $filters['class_id'] = $request->query('class_id');
+            }
+            if ($request->filled('from_date')) {
+                $filters['from_date'] = $request->query('from_date');
+            }
+            if ($request->filled('to_date')) {
+                $filters['to_date'] = $request->query('to_date');
+            }
+            if ($request->filled('status')) {
+                $filters['status'] = $request->query('status');
+            }
+            if (! empty($filters)) {
+                $request->merge(['filters' => $filters]);
+            }
+        }
+
+        $request->merge(['is_export' => true]);
         $response = $this->runCustomReport($request);
         $items    = json_decode($response->getContent(), true)['data'] ?? [];
 

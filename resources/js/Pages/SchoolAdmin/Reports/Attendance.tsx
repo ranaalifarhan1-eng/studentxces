@@ -35,14 +35,25 @@ export default function AttendanceReport({ records, summary, classes, filters }:
     const [status, setStatus]     = useState(filters.status ?? '');
 
     function applyFilter() {
+        const cleanClass = (!classId || classId === 'all') ? undefined : classId;
+        const cleanStatus = (!status || status === 'all') ? undefined : status;
         router.get('/school/reports/attendance', {
-            class_id: classId || undefined, from_date: fromDate || undefined,
-            to_date: toDate || undefined, status: status || undefined,
+            class_id: cleanClass,
+            from_date: fromDate || undefined,
+            to_date: toDate || undefined,
+            status: cleanStatus,
         }, { preserveState: true });
     }
     function exportPdf() {
-        const q = new URLSearchParams({ class_id: classId, from_date: fromDate, to_date: toDate }).toString();
-        window.open('/school/reports/attendance/export-pdf?' + q);
+        const cleanClass = (!classId || classId === 'all') ? '' : classId;
+        const cleanStatus = (!status || status === 'all') ? '' : status;
+        const params: Record<string, string> = {};
+        if (cleanClass) params.class_id = cleanClass;
+        if (fromDate) params.from_date = fromDate;
+        if (toDate) params.to_date = toDate;
+        if (cleanStatus) params.status = cleanStatus;
+        const q = new URLSearchParams(params).toString();
+        window.open('/school/reports/attendance/export-pdf' + (q ? '?' + q : ''));
     }
 
     const total = Object.values(summary).reduce((a, b) => a + b, 0);

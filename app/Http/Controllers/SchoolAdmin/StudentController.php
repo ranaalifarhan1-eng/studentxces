@@ -457,12 +457,12 @@ class StudentController extends Controller
             'has_active_temp_pass'  => $student->guardian->user->hasActiveTemporaryPassword(),
             'temp_pass_expires_at'  => $student->guardian->user->temporary_password_expires_at ? $student->guardian->user->temporary_password_expires_at->toDateTimeString() : null,
             'last_login_at'         => $student->guardian->user->last_login_at ? $student->guardian->user->last_login_at->toDateTimeString() : null,
-            'linked_children_count' => $student->guardian->students->count(),
-            'linked_children'       => $student->guardian->students->map(fn ($s) => [
+            'linked_children_count' => $student->guardian->students?->count() ?? 0,
+            'linked_children'       => $student->guardian->students ? $student->guardian->students->map(fn ($s) => [
                 'id'           => $s->id,
                 'name'         => $s->full_name,
                 'admission_no' => $s->admission_no,
-            ])->values(),
+            ])->values() : [],
         ] : null;
 
         return Inertia::render('SchoolAdmin/Students/Show', [

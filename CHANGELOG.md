@@ -3,6 +3,41 @@
 All meaningful product changes, enhancements, fixes and production releases
 are recorded here.
 
+## [2026-10-23 20:56 PKT] — Phase 4D Student Profile Legacy Portal Null-Safety
+
+**Module:** Students / School Admin / Portal / RBAC<br>
+**Status:** Local / Uncommitted<br>
+**Commit:** Uncommitted<br>
+
+### Fixed
+- **Student Profile Runtime TypeError on Legacy Records (Production Bug):**
+  - Resolved `TypeError: Cannot read properties of null (reading 'temp_password')` occurring when loading student profiles for legacy students without portal accounts (e.g. `/school/students/93`).
+  - **Exact Root Cause:** In `resources/js/Pages/SchoolAdmin/Students/Show.tsx`, the Print Slip dialog card evaluated `{revealedData?.username === portalUser?.username ? revealedData.temp_password : ...}` and `{revealedData?.username === guardianPortalUser?.username ? revealedData.temp_password : ...}`. When a student or guardian lacked a portal account (`portalUser === null` / `guardianPortalUser === null`) and no credential had been revealed (`revealedData === null`), both sides of the comparison evaluated to `undefined`. Because `undefined === undefined` is `true` in JavaScript, the ternary evaluated the truthy branch `revealedData.temp_password`, crashing the React component tree with a fatal property access on `null`.
+  - **Null-Safe Ternary Repair:** Replaced loose comparisons with explicit existence guards:
+    - Student card: `Boolean(revealedData && portalUser && revealedData.username === portalUser.username) ? revealedData?.temp_password : (portalUser ? '•••••••• (Click Reveal on card to view password)' : '—')`
+    - Guardian card: `Boolean(revealedData && guardianPortalUser && revealedData.username === guardianPortalUser.username) ? revealedData?.temp_password : (guardianPortalUser ? '•••••••• (Click Reveal on card to view password)' : '—')`
+  - **Button Action & Permission Gating (`Show.tsx`):**
+    - Gated the "Print Credential Slip" button with `canViewCredentials && (portalUser || guardianPortalUser)` so it only renders when credentials actually exist and the user has permission.
+    - Gated "Create Student Portal Account" action button with `canResetCredentials`.
+    - Gated "Create Parent Portal Account" action button with `canResetCredentials && student.guardian`.
+    - Hardened avatar initials fallback: `(student.first_name?.[0]?.toUpperCase() || 'S')`.
+- **Backend StudentController Guardian Traversal Null-Safety:**
+  - Hardened `StudentController::show` in `app/Http/Controllers/SchoolAdmin/StudentController.php` against legacy records missing guardian relationships or related students collection using safe null-safe navigation: `$student->guardian->students?->count() ?? 0` and safe mapping.
+
+### Added
+- **Automated Regression Test Suite (`StudentProfilePortalNullSafetyTest.php`):**
+  - Created 8 comprehensive automated feature tests (113 assertions) covering:
+    - **Scenario A (Legacy Student without Portal Account):** Loads student profile with `user_id = null` and `guardian.user_id = null`; returns HTTP 200, `portalUser = null`, `guardianPortalUser = null`, and zero exceptions.
+    - **Scenario B (Student with Portal Account but Legacy Guardian):** Loads student with active user account and unlinked guardian; returns HTTP 200 with populated student portal user and null guardian portal user.
+    - **Scenario C (Legacy Student with Provisioned Guardian):** Loads legacy student whose guardian has an active portal user; returns HTTP 200 with null student portal user and populated guardian portal user.
+    - **Scenario D (Fully Provisioned Student and Guardian):** Loads student with active portal accounts for both; returns HTTP 200 and passes both portal user models.
+    - **Scenario E (Student without Guardian Record):** Loads student where `guardian_id = null`; returns HTTP 200 and safely handles null guardian.
+    - **Scenario F (RBAC Portal Credential Viewing Permissions):** Validates that users with `students.portal_credentials.view` receive `canViewCredentials = true`, while unauthorized users receive `false`.
+    - **Scenario G (RBAC Portal Credential Reset Permissions):** Validates that users with `students.portal_credentials.reset` receive `canResetCredentials = true`, while unauthorized users receive `false`.
+    - **Scenario H (Tenant Isolation & Authorization):** Validates that student profiles are strictly protected by authentication and multi-tenant scoping.
+
+
+
 ## [2026-10-23 18:40 PKT] — Phase 4C Reports Reliability Fix, Export Scalability & UI Completeness (BUG-03)
 
 **Module:** Reports / School Admin / Exports / UI Scalability<br>

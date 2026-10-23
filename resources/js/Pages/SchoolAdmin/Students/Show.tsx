@@ -437,7 +437,7 @@ export default function ShowStudent() {
                         <div className="w-12 h-12 rounded-xl bg-indigo-50 dark:bg-indigo-950/40 flex items-center justify-center text-xl font-bold text-indigo-600 shrink-0">
                             {student.photo_url
                                 ? <img src={student.photo_url} className="w-12 h-12 rounded-xl object-cover" alt="" />
-                                : student.first_name[0].toUpperCase()
+                                : (student.first_name?.[0]?.toUpperCase() || 'S')
                             }
                         </div>
                         <div>
@@ -498,14 +498,16 @@ export default function ShowStudent() {
                             Independent authentication credentials for student and parent portals.
                         </p>
                     </div>
-                    <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => setPrintSlipOpen(true)}
-                        className="text-xs inline-flex items-center gap-1.5"
-                    >
-                        <Printer className="w-3.5 h-3.5" /> Print Credential Slip
-                    </Button>
+                    {canViewCredentials && (portalUser || guardianPortalUser) && (
+                        <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => setPrintSlipOpen(true)}
+                            className="text-xs inline-flex items-center gap-1.5"
+                        >
+                            <Printer className="w-3.5 h-3.5" /> Print Credential Slip
+                        </Button>
+                    )}
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -626,9 +628,11 @@ export default function ShowStudent() {
                             ) : (
                                 <div className="text-center py-4 space-y-2">
                                     <p className="text-xs text-slate-500">No portal account created for this student yet.</p>
-                                    <Button size="sm" onClick={() => setCreatePortalOpen(true)} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white">
-                                        Create Student Portal Account
-                                    </Button>
+                                    {canResetCredentials && (
+                                        <Button size="sm" onClick={() => setCreatePortalOpen(true)} className="text-xs bg-indigo-600 hover:bg-indigo-700 text-white">
+                                            Create Student Portal Account
+                                        </Button>
+                                    )}
                                 </div>
                             )}
                         </CardContent>
@@ -770,7 +774,7 @@ export default function ShowStudent() {
                                             ? `Guardian record exists (${student.guardian.name}) without a portal account.`
                                             : 'No guardian linked to this student.'}
                                     </p>
-                                    {student.guardian && (
+                                    {canResetCredentials && student.guardian && (
                                         <Button
                                             size="sm"
                                             onClick={handleCreateGuardianPortal}
@@ -1362,9 +1366,9 @@ export default function ShowStudent() {
                                 <div>
                                     <span className="text-slate-500">Temporary Password:</span>
                                     <p className="font-mono font-bold text-indigo-600 dark:text-indigo-400 bg-white dark:bg-slate-900 p-1.5 rounded border border-indigo-100 dark:border-indigo-900 mt-0.5">
-                                        {revealedData?.username === portalUser?.username
-                                            ? revealedData.temp_password
-                                            : '•••••••• (Click Reveal on card to view password)'}
+                                        {Boolean(revealedData && portalUser && revealedData.username === portalUser.username)
+                                            ? revealedData?.temp_password
+                                            : (portalUser ? '•••••••• (Click Reveal on card to view password)' : '—')}
                                     </p>
                                 </div>
                             </div>
@@ -1389,8 +1393,8 @@ export default function ShowStudent() {
                                 <div>
                                     <span className="text-slate-500">Temporary Password:</span>
                                     <p className="font-mono font-bold text-purple-600 dark:text-purple-400 bg-white dark:bg-slate-900 p-1.5 rounded border border-purple-100 dark:border-purple-900 mt-0.5">
-                                        {revealedData?.username === guardianPortalUser?.username
-                                            ? revealedData.temp_password
+                                        {Boolean(revealedData && guardianPortalUser && revealedData.username === guardianPortalUser.username)
+                                            ? revealedData?.temp_password
                                             : (guardianPortalUser ? '•••••••• (Click Reveal on card to view password)' : '—')}
                                     </p>
                                 </div>

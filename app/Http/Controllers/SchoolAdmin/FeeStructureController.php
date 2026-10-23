@@ -7,7 +7,9 @@ use App\Models\FeeCategory;
 use App\Models\FeeStructure;
 use App\Models\SchoolClass;
 use App\Rules\SchoolExists;
+use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Inertia\Inertia;
 
 class FeeStructureController extends Controller
@@ -35,6 +37,7 @@ class FeeStructureController extends Controller
             'categories'   => FeeCategory::where('school_id', $sid)->where('is_active', true)->orderBy('name')->get(['id', 'name', 'type']),
             'filters'      => $request->only('class_id', 'category_id', 'academic_year'),
             'currentYear'  => $currentYear,
+            'canDelete'    => $request->user() ? $request->user()->can('fees.structures.delete') : false,
         ]);
     }
 
@@ -87,9 +90,35 @@ class FeeStructureController extends Controller
         return back()->with('success', 'Fee structure updated.');
     }
 
-    public function destroy(FeeStructure $feeStructure)
+    public function destroy(FeeStructure $feeStructure): RedirectResponse
     {
+        $sid = $this->getSchoolId();
+        if ((int) $feeStructure->school_id !== (int) $sid) {
+            abort(403, 'Unauthorized.');
+        }
+
+        $user = auth()->user();
+        if (! $user || ! $user->can('fees.structures.delete')) {
+            abort(403, 'You do not have permission to delete fee structures.');
+        }
+
+        $hasAssignments = DB::table('student_fee_assignments')
+            ->where('school_id', $sid)
+            ->where('fee_structure_id', $feeStructure->id)
+            ->exists();
+
+        $hasChallanItems = DB::table('fee_challan_items')
+            ->where('school_id', $sid)
+            ->where('fee_structure_id', $feeStructure->id)
+            ->exists();
+
+        if ($hasAssignments || $hasChallanItems) {
+            $msg = 'This fee structure cannot be deleted because it is already assigned or used in fee challans. Deactivate it instead to preserve financial history.';
+            return back()->with('error', $msg)->withErrors(['error' => $msg]);
+        }
+
         $feeStructure->delete();
+
         return back()->with('success', 'Fee structure deleted.');
     }
 

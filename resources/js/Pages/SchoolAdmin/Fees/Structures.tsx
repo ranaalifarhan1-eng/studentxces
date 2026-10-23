@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useRef } from 'react';
 import { useForm, router, usePage } from '@inertiajs/react';
 import AppLayout from '@/Layouts/AppLayout';
 import { Button } from '@/components/ui/button';
@@ -6,6 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import DeleteConfirmDialog from '@/components/ui/delete-confirm-dialog';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
@@ -29,6 +30,7 @@ interface Props {
     categories: FeeCategory[];
     filters: { class_id?: string; category_id?: string; academic_year?: string };
     currentYear: string;
+    canDelete?: boolean;
 }
 
 const FREQ_LABELS: Record<string, string> = {
@@ -39,7 +41,7 @@ const FREQ_COLORS: Record<string, string> = {
     annual: 'bg-teal-100 text-teal-700', one_time: 'bg-amber-100 text-amber-700',
 };
 
-export default function FeeStructures({ structures, classes, categories, filters, currentYear }: Props) {
+export default function FeeStructures({ structures, classes, categories, filters, currentYear, canDelete = false }: Props) {
     const { flash } = usePage<PageProps>().props;
     const { currency, format: formatMoney } = useCurrency();
     const [open, setOpen] = useState(false);
@@ -50,6 +52,12 @@ export default function FeeStructures({ structures, classes, categories, filters
     const [copyingStructure, setCopyingStructure] = useState<FeeStructure | null>(null);
     const [selectedCopyClassIds, setSelectedCopyClassIds] = useState<number[]>([]);
     const [copying, setCopying] = useState(false);
+
+    // Delete confirmation modal state
+    const [deletingStructure, setDeletingStructure] = useState<FeeStructure | null>(null);
+    const [isDeleting, setIsDeleting] = useState(false);
+    const isDeletingRef = useRef(false);
+    const [deleteError, setDeleteError] = useState<string | null>(null);
 
     const { data, setData, post, put, delete: destroy, processing, errors, reset } = useForm({ 
         class_id: '', fee_category_id: '', academic_year: currentYear || '2025-2026', amount: '', due_date: '', frequency: 'monthly', description: '', is_active: true, is_optional: false,
@@ -123,9 +131,40 @@ export default function FeeStructures({ structures, classes, categories, filters
         }
     }
 
-    function handleDelete(s: FeeStructure) {
-        if (!confirm(`Delete fee structure for "${s.fee_category?.name}"?`)) return;
-        destroy(`/school/fees/structures/${s.id}`);
+    function openDelete(s: FeeStructure) {
+        setDeleteError(null);
+        setDeletingStructure(s);
+    }
+
+    function handleConfirmDelete() {
+        if (!deletingStructure || isDeleting || isDeletingRef.current) return;
+        isDeletingRef.current = true;
+        setIsDeleting(true);
+        setDeleteError(null);
+
+        router.delete(`/school/fees/structures/${deletingStructure.id}`, {
+            preserveScroll: true,
+            onSuccess: (page) => {
+                const flashErr = (page.props as any).flash?.error;
+                const errs = (page.props as any).errors;
+                const err = flashErr || errs?.error;
+                if (err) {
+                    setDeleteError(err);
+                    setIsDeleting(false);
+                    isDeletingRef.current = false;
+                } else {
+                    setDeletingStructure(null);
+                    setDeleteError(null);
+                    setIsDeleting(false);
+                    isDeletingRef.current = false;
+                }
+            },
+            onError: (errs) => {
+                setDeleteError(errs.error || 'Failed to delete fee structure.');
+                setIsDeleting(false);
+                isDeletingRef.current = false;
+            },
+        });
     }
 
     // Helper names for form Select values to avoid raw numeric ID bug
@@ -272,9 +311,11 @@ export default function FeeStructures({ structures, classes, categories, filters
                                                 <DropdownMenuItem onClick={() => openEdit(s)} className="flex items-center gap-2 text-sm cursor-pointer">
                                                     <Pencil className="w-4 h-4" /> Edit
                                                 </DropdownMenuItem>
-                                                <DropdownMenuItem onClick={() => handleDelete(s)} className="flex items-center gap-2 text-sm text-red-600 focus:text-red-600 cursor-pointer">
-                                                    <Trash2 className="w-4 h-4" /> Delete
-                                                </DropdownMenuItem>
+                                                {canDelete && (
+                                                    <DropdownMenuItem onClick={() => openDelete(s)} className="flex items-center gap-2 text-sm text-red-600 focus:text-red-600 cursor-pointer">
+                                                        <Trash2 className="w-4 h-4" /> Delete
+                                                    </DropdownMenuItem>
+                                                )}
                                             </DropdownMenuContent>
                                         </DropdownMenu>
                                     </TableCell>
@@ -521,6 +562,21 @@ export default function FeeStructures({ structures, classes, categories, filters
                     )}
                 </DialogContent>
             </Dialog>
+
+            <DeleteConfirmDialog
+                open={Boolean(deletingStructure)}
+                onOpenChange={(isOpen: boolean) => {
+                    if (!isOpen) {
+                        setDeletingStructure(null);
+                        setDeleteError(null);
+                    }
+                }}
+                title="Delete Fee Structure"
+                entityName={deletingStructure?.fee_category?.name ? `${deletingStructure.fee_category.name} (${deletingStructure.academic_year})` : undefined}
+                loading={isDeleting}
+                error={deleteError}
+                onConfirm={handleConfirmDelete}
+            />
         </AppLayout>
     );
 }

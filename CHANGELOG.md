@@ -3,6 +3,57 @@
 All meaningful product changes, enhancements, fixes and production releases
 are recorded here.
 
+## [2026-10-23 22:35 PKT] — Phase 5B Fee Structure Deletion Safety
+
+**Module:** Fees / School Admin / Relational Integrity / RBAC<br>
+**Status:** Local / Uncommitted<br>
+**Commit:** Uncommitted<br>
+
+### Security & RBAC
+- **Dedicated Granular Permission `fees.structures.delete`:**
+  - Created migration `2026_10_23_220000_add_fees_structures_delete_permission.php` registering `fees.structures.delete` permission on `web` guard.
+  - Assigned `fees.structures.delete` by default exclusively to `super-admin` and `school-admin` roles.
+  - Staff roles (`accountant`, `teacher`, `principal`, `librarian`, `receptionist`) are strictly excluded by default.
+  - Updated `database/seeders/RolePermissionSeeder.php` to define `fees.structures.delete` in the canonical fee permissions array and `school-admin` wildcard role mapping.
+  - Added route middleware `middleware('permission:fees.structures.delete')` to `DELETE school/fees/structures/{feeStructure}` in `routes/web.php`.
+  - Added controller authorization guard in `FeeStructureController::destroy`: `$request->user()->can('fees.structures.delete')` returning HTTP 403 on denial.
+
+### Fixed & Enhanced
+- **Relational Integrity & Dependency Protection on Deletion:**
+  - Hardened `FeeStructureController::destroy` against accidental or unauthorized data loss.
+  - Implemented strict database dependency checks scoped to the active tenant before allowing deletion:
+    - Checked `student_fee_assignments` via `StudentFeeAssignment::where('school_id', $sid)->where('fee_structure_id', $feeStructure->id)->exists()`.
+    - Checked `fee_challan_items` via `FeeChallanItem::where('school_id', $sid)->where('fee_structure_id', $feeStructure->id)->exists()`.
+  - If either dependency exists, deletion is strictly aborted with zero mutations and returns user-friendly guidance: `"This fee structure cannot be deleted because it is already assigned or used in fee challans. Deactivate it instead to preserve financial history."`
+  - Unused fee structures remain safely soft-deletable via `$feeStructure->delete()`.
+- **Historical Relationship Null-Safety (`->withTrashed()`):**
+  - Updated `FeeChallanItem::feeStructure()` relationship in `app/Models/FeeChallanItem.php` to include `->withTrashed()`.
+  - Updated `FeePayment::feeStructure()` relationship in `app/Models/FeePayment.php` to include `->withTrashed()`.
+  - Guarantees historical challan print slips, student ledger history, and audit trails resolve fee structure titles and categories even after structure retirement/soft-deletion.
+  - Verified future billing generation (`FeeBillingService::generateMonthlyChallans`) remains unaffected, automatically querying only active non-deleted structures.
+- **Frontend Dialog Safety & UX Hardening:**
+  - Replaced native browser `confirm()` in `resources/js/Pages/SchoolAdmin/Fees/Structures.tsx` with reusable `DeleteConfirmDialog` component.
+  - Gated the table row "Delete" dropdown menu item on frontend prop `canDelete`.
+  - Added client-side double-click / race-condition protection via `isDeletingRef`.
+  - Wired inline error handling to display friendly controller dependency warnings directly inside `DeleteConfirmDialog` without dismissal.
+
+### Added
+- **Automated Regression Test Suite (`FeeStructureDeletionSafetyTest.php`):**
+  - Added 12 comprehensive feature test cases (58 assertions) verifying:
+    1. Authorized deletion of unused fee structure succeeds and sets `deleted_at`.
+    2. Deletion blocked with friendly warning when `student_fee_assignments` reference exists (zero mutations).
+    3. Deletion blocked with friendly warning when unpaid `fee_challan_items` reference exists.
+    4. Deletion blocked with friendly warning when partial or paid `fee_challan_items` reference exists.
+    5. Unauthorized teacher receives HTTP 403.
+    6. Accountant without `fees.structures.delete` receives HTTP 403; granted permission succeeds.
+    7. Revoking permission from `school-admin` enforces HTTP 403.
+    8. Custom role without permission receives HTTP 403; with permission succeeds.
+    9. Cross-school structure deletion is strictly blocked (HTTP 403) with zero mutations.
+    10. Historical challan item resolves soft-deleted fee structure without null pointers.
+    11. Soft-deleted structure is strictly excluded from `FeeBillingService::generateMonthlyChallans`.
+    12. `FeeStructureController::index` dynamically passes `canDelete` prop reflecting user permissions.
+
+
 ## [2026-10-23 20:56 PKT] — Phase 4D Student Profile Legacy Portal Null-Safety
 
 **Module:** Students / School Admin / Portal / RBAC<br>

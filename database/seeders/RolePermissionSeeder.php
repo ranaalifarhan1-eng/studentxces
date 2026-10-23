@@ -42,7 +42,7 @@ class RolePermissionSeeder extends Seeder
         'reportcard.generate',
 
         // Fees
-        'fees.view', 'fees.collect', 'fees.structure', 'fees.assign', 'fees.discount', 'fees.reports', 'fees.waiver',
+        'fees.view', 'fees.collect', 'fees.structure', 'fees.structures.delete', 'fees.assign', 'fees.discount', 'fees.reports', 'fees.waiver',
         'fees.online', 'fees.bulk_bill', 'fees.adjustment', 'expenses.view', 'expenses.create',
 
         // Payroll & HR

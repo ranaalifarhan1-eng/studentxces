@@ -326,7 +326,7 @@ Route::middleware('auth')->group(function () {
                     Route::delete('fees/categories/{feeCategory}',    [FeeCategoryController::class, 'destroy'])->name('fees.categories.destroy');
                     Route::post('fees/structures',                    [FeeStructureController::class, 'store'])->name('fees.structures.store');
                     Route::put('fees/structures/{feeStructure}',      [FeeStructureController::class, 'update'])->name('fees.structures.update');
-                    Route::delete('fees/structures/{feeStructure}',   [FeeStructureController::class, 'destroy'])->name('fees.structures.destroy');
+                    Route::delete('fees/structures/{feeStructure}',   [FeeStructureController::class, 'destroy'])->name('fees.structures.destroy')->middleware('permission:fees.structures.delete');
                     Route::post('fees/structures/{feeStructure}/copy',[FeeStructureController::class, 'copy'])->name('fees.structures.copy')->whereNumber('feeStructure');
                     Route::post('fees/discounts',                     [FeeDiscountController::class, 'store'])->name('fees.discounts.store');
                     Route::put('fees/discounts/{studentFeeDiscount}',  [FeeDiscountController::class, 'update'])->name('fees.discounts.update');

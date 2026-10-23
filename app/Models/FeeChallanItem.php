@@ -38,6 +38,6 @@ class FeeChallanItem extends Model
 
     public function feeStructure(): BelongsTo
     {
-        return $this->belongsTo(FeeStructure::class);
+        return $this->belongsTo(FeeStructure::class)->withTrashed();
     }
 }

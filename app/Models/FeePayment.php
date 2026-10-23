@@ -49,7 +49,7 @@ class FeePayment extends Model
 
     public function feeStructure(): BelongsTo
     {
-        return $this->belongsTo(FeeStructure::class);
+        return $this->belongsTo(FeeStructure::class)->withTrashed();
     }
 
     public function collector(): BelongsTo

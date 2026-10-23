@@ -46,7 +46,7 @@ class RolePermissionSeeder extends Seeder
         'fees.online', 'fees.bulk_bill', 'fees.adjustment', 'expenses.view', 'expenses.create',
 
         // Payroll & HR
-        'payroll.view', 'payroll.generate', 'payslip.download',
+        'payroll.view', 'payroll.generate', 'payroll.mark_paid', 'payslip.download',
         'leave.view', 'leave.apply', 'leave.approve',
         'staff.performance',
 

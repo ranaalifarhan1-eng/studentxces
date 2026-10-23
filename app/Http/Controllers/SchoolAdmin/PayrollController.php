@@ -87,11 +87,15 @@ class PayrollController extends Controller
                 ->count(),
         ];
 
+        $user = $request->user();
+        $canMarkPaid = $user ? $user->can('payroll.mark_paid') : false;
+
         return Inertia::render('SchoolAdmin/HR/Payroll', [
-            'payrolls'    => $payrolls,
-            'departments' => Department::where('school_id', $sid)->orderBy('name')->get(['id', 'name']),
-            'filters'     => $request->only('month_year', 'department_id', 'status'),
-            'stats'       => $stats,
+            'payrolls'      => $payrolls,
+            'departments'   => Department::where('school_id', $sid)->orderBy('name')->get(['id', 'name']),
+            'filters'       => $request->only('month_year', 'department_id', 'status'),
+            'stats'         => $stats,
+            'can_mark_paid' => $canMarkPaid,
         ]);
     }
 
@@ -230,6 +234,20 @@ class PayrollController extends Controller
 
     public function markPaid(Request $request, Payroll $payroll)
     {
+        $user = $request->user();
+        if (! $user || ! $user->can('payroll.mark_paid')) {
+            abort(403, 'Unauthorized.');
+        }
+
+        $sid = $this->getSchoolId();
+        if ((int) $payroll->school_id !== (int) $sid) {
+            abort(403, 'Unauthorized cross-school payroll access.');
+        }
+
+        if ($payroll->status === 'paid') {
+            return back()->with('warning', 'Payroll is already marked as paid.');
+        }
+
         $payroll->update([
             'status'  => 'paid',
             'paid_on' => now()->toDateString(),

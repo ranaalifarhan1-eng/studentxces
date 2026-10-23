@@ -28,6 +28,7 @@ interface Props {
     departments: Department[];
     filters: { month_year?: string; department_id?: string; status?: string };
     stats: Stats;
+    can_mark_paid?: boolean;
 }
 
 const STATUS_STYLE: Record<string, string> = {
@@ -36,7 +37,7 @@ const STATUS_STYLE: Record<string, string> = {
     draft:     'bg-slate-100 text-slate-600',
 };
 
-export default function PayrollIndex({ payrolls, departments, filters, stats }: Props) {
+export default function PayrollIndex({ payrolls, departments, filters, stats, can_mark_paid = false }: Props) {
     const { flash, active_school, locale } = usePage().props as unknown as PageProps;
     const { format: formatMoney } = useCurrency();
     const schoolTimezone = active_school?.timezone || locale?.timezone;
@@ -50,6 +51,7 @@ export default function PayrollIndex({ payrolls, departments, filters, stats }: 
     });
     const [genErrors, setGenErrors] = useState<{ working_days?: string; month_year?: string }>({});
     const [generating, setGenerating] = useState(false);
+    const [payingId, setPayingId] = useState<number | null>(null);
 
     function applyFilter(key: string, value: string) {
         router.get('/school/hr/payroll', { ...filters, [key]: value || undefined }, { preserveScroll: true });
@@ -81,7 +83,12 @@ export default function PayrollIndex({ payrolls, departments, filters, stats }: 
     }
 
     function handleMarkPaid(id: number) {
-        router.put(`/school/hr/payroll/${id}/pay`);
+        if (payingId !== null) return;
+        setPayingId(id);
+        router.put(`/school/hr/payroll/${id}/paid`, {}, {
+            preserveScroll: true,
+            onFinish: () => setPayingId(null),
+        });
     }
 
     return (
@@ -196,8 +203,15 @@ export default function PayrollIndex({ payrolls, departments, filters, stats }: 
                                             <Link href={`/school/hr/payroll/${p.id}/slip`}>
                                                 <Button size="sm" variant="outline" className="text-xs h-7">Slip</Button>
                                             </Link>
-                                            {p.status !== 'paid' && (
-                                                <Button size="sm" onClick={() => handleMarkPaid(p.id)} className="text-xs h-7 bg-green-600 hover:bg-green-700 text-white">Pay</Button>
+                                            {can_mark_paid && p.status !== 'paid' && (
+                                                <Button
+                                                    size="sm"
+                                                    onClick={() => handleMarkPaid(p.id)}
+                                                    disabled={payingId === p.id}
+                                                    className="text-xs h-7 bg-green-600 hover:bg-green-700 text-white disabled:opacity-50"
+                                                >
+                                                    {payingId === p.id ? 'Paying...' : 'Pay'}
+                                                </Button>
                                             )}
                                         </div>
                                     </TableCell>

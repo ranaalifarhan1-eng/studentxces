@@ -3,6 +3,60 @@
 All meaningful product changes, enhancements, fixes and production releases
 are recorded here.
 
+## [2026-10-23 12:15 PKT] — Phase 4B Payroll Pay Action Route Alignment & Authorization Hardening
+
+**Module:** Payroll / Human Resources / School Admin / RBAC<br>
+**Status:** Local / Uncommitted<br>
+**Commit:** Uncommitted<br>
+
+### Security & Authorization
+- **Dedicated Payroll Disbursement Permission (`payroll.mark_paid`):**
+  - Registered granular permission `payroll.mark_paid` via migration `2026_10_23_120000_add_payroll_mark_paid_permission.php` and updated `RolePermissionSeeder.php`.
+  - Granted by default exclusively to administrative roles (`super-admin` and `school-admin`).
+  - Access to the HR module no longer implicitly grants disbursement authority; roles such as `teacher`, `librarian`, `principal`, and `accountant` are denied unless explicitly assigned `payroll.mark_paid`.
+  - Custom roles retain full compatibility through explicit permission grant.
+- **Server-Side Enforcement (`PayrollController::markPaid`):**
+  - Authoritatively rejects unauthorized users with HTTP 403 using pure permission-only authorization (`! $user || ! $user->can('payroll.mark_paid')`), completely free of hardcoded role checks or bypasses.
+  - Relies on existing `Gate::before` for platform super-admin override and migration grant for school-admin.
+  - Enforced before mutation logic, alongside explicit tenant verification (`$sid !== $payroll->school_id` -> 403).
+- **Conditional UI Props & Button Isolation (`PayrollController::index` & `Payroll.tsx`):**
+  - Exposed boolean prop `can_mark_paid` in `PayrollController::index` strictly via `$user ? $user->can('payroll.mark_paid') : false`.
+  - Aligned frontend `Payroll.tsx` to conditionally render the "Pay" button only when `can_mark_paid` is true and payroll is unpaid.
+
+### Fixed
+- **Payroll Pay Button Endpoint Alignment (`Payroll.tsx`):**
+  - Resolved HTTP 404 error (BUG-02) by aligning the frontend "Pay" action request from obsolete `/school/hr/payroll/{id}/pay` to canonical registered route `PUT /school/hr/payroll/{id}/paid`.
+  - Added in-flight request protection with `payingId` state disabling the button and preventing accidental rapid double-submissions.
+  - Hardened state transitions to hide the "Pay" button once marked paid and preserved scroll position on Inertia reload.
+- **Tenant Scoping & Already-Paid Idempotency Safeguards (`PayrollController::markPaid`):**
+  - Added explicit tenant verification ensuring payroll belongs to active school (`$sid !== $payroll->school_id` aborts with 403).
+  - Enforced status immutability for already-paid records preventing duplicate disbursement or historical `paid_on` overwrites.
+  - Maintained atomic field update (`status` and `paid_on`) without modifying salary breakdown figures or recalculating payroll amounts.
+
+### Added
+- **Automated Regression & Authorization Test Suite (`PayrollPayActionTest.php`):**
+  - Expanded test suite to 17 end-to-end feature tests covering:
+    - Super-admin permitted execution with active school context.
+    - School-admin with permission permitted execution.
+    - School-admin with permission explicitly removed rejected with HTTP 403 (proving absence of role bypass).
+    - Unauthorized teacher rejection with HTTP 403.
+    - Unauthorized librarian rejection with HTTP 403.
+    - Unauthorized principal rejection with HTTP 403 without permission.
+    - Principal permitted execution when explicitly granted `payroll.mark_paid`.
+    - Unauthorized accountant rejection with HTTP 403 without permission.
+    - Accountant permitted execution when explicitly granted `payroll.mark_paid`.
+    - Custom role with `payroll.mark_paid` permitted execution.
+    - Custom role without `payroll.mark_paid` rejection with HTTP 403.
+    - Accurate `can_mark_paid` Inertia page prop assertions across permitted, non-permitted, and revoked roles.
+    - Canonical `PUT /school/hr/payroll/{id}/paid` execution with atomic status and date update.
+    - Legacy `/pay` endpoint 404 root-cause isolation.
+    - Already-paid payroll duplicate payment protection and date immutability.
+    - Cross-school tenant isolation rejection.
+    - Guest redirection to login.
+    - Full end-to-end lifecycle from payroll generation to disbursement and regeneration preservation.
+- **Live Local Headless Browser Acceptance Verification:**
+  - Automated acceptance test using real Chromium via Chrome DevTools Protocol (CDP) verifying table row rendering, "Pay" button click, network request dispatch to `/school/hr/payroll/{id}/paid`, successful response, real-time UI transition to "paid", Pay button removal, and persistence upon full page reload with 0 console errors.
+
 ## [2026-10-21 20:28 PKT] — Phase 4A Fee Collection Integrity & Receipt Printing
 
 **Module:** Fee Payments / School Admin / Receipts<br>

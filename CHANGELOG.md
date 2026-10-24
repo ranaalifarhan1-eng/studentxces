@@ -3,6 +3,52 @@
 All meaningful product changes, enhancements, fixes and production releases
 are recorded here.
 
+## [2026-10-24 13:50 PKT] — Recurring Fee Billing Recovery & Charge-Level Catch-Up
+
+**Module:** Fees / Recurring Billing / Automation / Multi-Tenancy<br>
+**Status:** Local / Uncommitted<br>
+**Commit:** Uncommitted<br>
+
+### Added
+- **Monthly Recurring Billing Engine (`RecurringFeeBillingService`):**
+  - Recovered automated recurring fee generation from isolated stash without data loss.
+  - Added deterministic fee due day calculation (`resolveRecurringDueDate`), safely clamped to 1..28.
+  - Per-school auto-billing settings (`auto_billing_enabled`, `auto_billing_day`, `recurring_fee_due_day`) with complete tenant isolation and default OFF status.
+  - Zero-mutation dry run preview endpoint (`previewBillingCycle`) with charge-level calculations.
+  - Multi-worker concurrency guard preventing overlapping execution via `FeeBillingRun` locks.
+  - Scheduled hourly console command `RunRecurringBillingCycleCommand` registered in `routes/console.php`.
+  - Queueable background job `ProcessSchoolRecurringBillingJob` for asynchronous execution per tenant.
+  - School admin UI (`RecurringBilling.tsx`) accessible via Sidebar (Finance -> Fee Billing) and Settings (Fee Billing tab) with full execution history, manual Run Now trigger, and real-time preview.
+- **Dedicated Database Schema (`fee_billing_runs`):**
+  - Migration `2026_10_03_204000_create_fee_billing_runs_table.php` recording complete execution audit trails: `school_id`, `academic_year_id`, `target_month`, `billing_period_key`, `status`, `triggered_by`, `started_at`, `completed_at`, `last_executed_at`, `execution_count`, `students_scanned`, `challans_created`, `last_challans_created`, `challans_skipped`, `total_amount`, and `error_summary`.
+
+### Enhanced & Fixed
+- **Authoritative Append Contract & Concurrency Lock (`FeeBillingService::appendLinesToExistingChallan`):**
+  - Centralized charge append mutation logic into a single authoritative method shared by Recurring Billing Catch-Up and Bulk Fee Assign.
+  - Enforces pessimistic row-level locking (`lockForUpdate()`) on `FeeChallan`, eliminating lost-update race conditions where concurrent appends (e.g. Recurring Transport + Bulk Lab) could overwrite totals.
+  - Recalculates `gross_amount`, `discount_amount`, and `total_payable` directly from the sum of all associated `FeeChallanItem`s, mathematically guaranteeing `challan.gross_amount == SUM(items.gross_amount)`.
+  - Idempotent collision handling: rejects duplicate appends of the same fee structure via `active_charge_key` without raising 500 exceptions or causing duplicate financial increases.
+- **Truthful Billing Run & Generation Counters:**
+  - Hardened schema and accounting semantics: genuinely new vouchers (`challans_created`) are strictly distinguished from existing vouchers updated with appended charges (`vouchers_updated` and `charges_appended`).
+  - Added `vouchers_updated`, `last_vouchers_updated`, `charges_appended`, and `last_charges_appended` to `fee_billing_runs` table and model.
+  - `FeeBulkAssignService::execute` response payload separates `vouchers_generated` (new vouchers) from `vouchers_updated` (existing vouchers updated).
+  - UI in `RecurringBilling.tsx` and `BulkAssign.tsx` updated to truthfully communicate Students Scanned, New Vouchers, Existing Vouchers Updated (Charges Appended), and Amount Added.
+- **Charge-Level Same-Month Catch-Up & Append Architecture:**
+  - Hardened `FeeBillingService::createChallanFromStructures` and `FeeBulkAssignService`: when an active challan already exists for a student and billing period (enforcing `active_period_key` unique constraint), newly assigned eligible charges are appended as `FeeChallanItem`s directly to the existing challan.
+  - Atomically recalculates `gross_amount`, `discount_amount`, and `total_payable` with integer-cents precision (`App\Support\Money`).
+  - Automatically transitions `status` from `paid` to `partial` when newly appended charges increase total payable beyond collected amount.
+  - Charge-aware standing concession preservation: fixed all-head discounts cap allocation based on previously absorbed discount amounts (`alreadyAppliedDiscountCents`), preventing double-discount anomalies on catch-up charges.
+- **Charge-Aware & Frequency-Aware Scheduler Eligibility:**
+  - Upgraded `RecurringFeeBillingService::hasUnbilledEligibleStudents`: replaced student-level existence checks with granular charge-level evaluation via `FeeBillingService::isStructureEligible`.
+  - Frequency-aware safety guards: scheduler safely returns `false` (avoiding needless hourly wake-ups) when a school only has one-time fees, already-billed annual fees, already-billed quarterly fees, inactive assignments, or soft-deleted/inactive fee structures.
+- **Accurate Cumulative Run Accounting:**
+  - Fee billing runs accurately maintain cumulative counters across catch-up runs: `challans_created` reflects cumulative vouchers/charges generated, `last_challans_created` reflects additions in the latest run, `total_amount` adds only newly generated payable amounts (preventing double counting), and `execution_count` increments on each catch-up run.
+  - `students_scanned` semantics explicitly defined and surfaced in UI as active eligible students evaluated in the latest execution.
+
+### Security
+- Default disabled across all tenants: automated billing requires explicit opt-in by school administrators.
+- Tenant isolation enforced on all queries and job executions: cross-tenant billing operations and foreign keys are strictly prohibited.
+
 ## [2026-10-23 22:35 PKT] — Phase 5B Fee Structure Deletion Safety
 
 **Module:** Fees / School Admin / Relational Integrity / RBAC<br>

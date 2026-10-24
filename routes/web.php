@@ -10,6 +10,7 @@ use App\Http\Controllers\SchoolAdmin\FeeDiscountController;
 use App\Http\Controllers\SchoolAdmin\FeePaymentController;
 use App\Http\Controllers\SchoolAdmin\FeeStructureController;
 use App\Http\Controllers\SchoolAdmin\FeeBulkAssignController;
+use App\Http\Controllers\SchoolAdmin\RecurringBillingController;
 use App\Http\Controllers\SchoolAdmin\FeeAdjustmentController;
 use App\Http\Controllers\SchoolAdmin\CommunicationController;
 use App\Http\Controllers\SchoolAdmin\DomainController;
@@ -333,12 +334,16 @@ Route::middleware('auth')->group(function () {
                     Route::delete('fees/discounts/{studentFeeDiscount}',[FeeDiscountController::class, 'destroy'])->name('fees.discounts.destroy');
                 });
 
-                // Bulk Fee Operations (fees.bulk_bill)
+                // Bulk Fee Operations & Recurring Billing (fees.bulk_bill)
                 Route::middleware('permission:fees.bulk_bill')->group(function () {
                     Route::get('fees/structures/bulk-assign',              [FeeBulkAssignController::class, 'index'])->name('fees.structures.bulk-assign');
                     Route::post('fees/structures/bulk-assign/preview',     [FeeBulkAssignController::class, 'preview'])->name('fees.structures.bulk-assign.preview');
                     Route::post('fees/structures/bulk-assign/execute',     [FeeBulkAssignController::class, 'execute'])->name('fees.structures.bulk-assign.execute');
                     Route::get('fees/structures/classes/{schoolClass}/students', [FeeBulkAssignController::class, 'classStudents'])->name('fees.structures.class-students')->whereNumber('schoolClass');
+                    Route::get('fees/recurring-billing',                   [RecurringBillingController::class, 'index'])->name('fees.recurring-billing.index');
+                    Route::post('fees/recurring-billing/settings',          [RecurringBillingController::class, 'saveSettings'])->name('fees.recurring-billing.settings');
+                    Route::post('fees/recurring-billing/preview',           [RecurringBillingController::class, 'preview'])->name('fees.recurring-billing.preview');
+                    Route::post('fees/recurring-billing/run-now',           [RecurringBillingController::class, 'runNow'])->name('fees.recurring-billing.run-now');
                 });
             });
 
@@ -380,6 +385,7 @@ Route::middleware('auth')->group(function () {
             Route::post('settings/branding',                    [SchoolSettingsController::class, 'saveBranding'])->name('settings.branding');
             Route::post('settings/academic',                    [SchoolSettingsController::class, 'saveAcademic'])->name('settings.academic');
             Route::post('settings/notifications',               [SchoolSettingsController::class, 'saveNotifications'])->name('settings.notifications');
+            Route::post('settings/fee-billing',                 [RecurringBillingController::class, 'saveSettings'])->name('settings.fee-billing');
             Route::get('settings/integrations',                 [IntegrationController::class, 'index'])->name('settings.integrations');
             Route::post('settings/integrations/smtp',           [IntegrationController::class, 'saveSmtp'])->name('settings.integrations.smtp');
             Route::post('settings/integrations/smtp/test',      [IntegrationController::class, 'testSmtp'])->name('settings.integrations.smtp.test');

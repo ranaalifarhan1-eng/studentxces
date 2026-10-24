@@ -191,7 +191,11 @@ class FeeBulkAssignService
                 $newAssignmentsCount++;
             }
 
-            $isBilled = $existingChallans->has($student->id) || $existingItems->has($student->id);
+            $hasMatchingChallan = $existingChallans->has($student->id) && (
+                $structure->frequency === 'one_time' ||
+                $existingChallans->get($student->id)->billing_period_key === $billingLabel
+            );
+            $isBilled = $existingItems->has($student->id) || $hasMatchingChallan;
             if ($isBilled) {
                 $alreadyBilledCount++;
             }
@@ -311,6 +315,7 @@ class FeeBulkAssignService
         $assignmentsCreated = 0;
         $alreadyAssigned = 0;
         $vouchersGenerated = 0;
+        $vouchersUpdated = 0;
         $alreadyBilled = 0;
         $notificationsQueued = 0;
         $missingEmailCount = 0;
@@ -399,7 +404,12 @@ class FeeBulkAssignService
                             }
                         })->first();
 
-                    if ($existingChallan || $existingItem) {
+                    $hasMatchingChallan = $existingChallan && (
+                        $structure->frequency === 'one_time' ||
+                        $existingChallan->billing_period_key === $billingLabel
+                    );
+
+                    if ($existingItem || $hasMatchingChallan) {
                         $alreadyBilled++;
                         continue;
                     }
@@ -413,9 +423,48 @@ class FeeBulkAssignService
                               ->orWhere('fee_category_id', $structure->fee_category_id);
                         })->first();
 
-                    $discountCents = $discount ? $discount->calculateDiscountCents($structureGrossCents) : 0;
+                    $discountCents = 0;
+                    if ($discount) {
+                        if ($discount->type === 'percentage') {
+                            $discountCents = $discount->calculateDiscountCents($structureGrossCents);
+                        } else {
+                            $alreadyDiscountCents = $existingChallan ? Money::toCents($existingChallan->discount_amount) : 0;
+                            $remainingFixedCents = max(0, Money::toCents($discount->value) - $alreadyDiscountCents);
+                            $discountCents = min($remainingFixedCents, $structureGrossCents);
+                        }
+                    }
                     $discountCents = min($discountCents, $structureGrossCents);
                     $netCents = max(0, $structureGrossCents - $discountCents);
+
+                    if ($existingChallan) {
+                        $appendResult = FeeBillingService::appendLinesToExistingChallan(
+                            $existingChallan->id,
+                            [[
+                                'fee_structure_id'  => $structure->id,
+                                'charge_period_key' => $canonicalChargePeriodKey,
+                                'fee_head_name'     => $structure->feeCategory?->name ?? 'Fee Head',
+                                'gross_cents'       => $structureGrossCents,
+                                'discount_cents'    => $discountCents,
+                                'net_cents'         => $netCents,
+                            ]],
+                            $schoolId,
+                            $student->id
+                        );
+
+                        if ($appendResult) {
+                            $vouchersUpdated++;
+                            $createdChallans[] = [
+                                'challan_no'   => $appendResult->challan_no,
+                                'student_name' => $student->full_name,
+                                'admission_no' => $student->admission_no,
+                                'amount'       => Money::toDecimal($netCents),
+                                'was_appended' => true,
+                            ];
+                        } else {
+                            $alreadyBilled++;
+                        }
+                        continue;
+                    }
 
                     $challanNo = DocumentSequenceService::nextNumber($schoolId, 'challan', 'CHL', (int) $targetMonth->format('Y'));
                     $prevDebtCents = FeeBillingService::computePreviousOutstandingCents($student);
@@ -552,6 +601,7 @@ class FeeBulkAssignService
             'assignments_created'  => $assignmentsCreated,
             'already_assigned'     => $alreadyAssigned,
             'vouchers_generated'   => $vouchersGenerated,
+            'vouchers_updated'     => $vouchersUpdated,
             'already_billed'       => $alreadyBilled,
             'notifications_queued' => $notificationsQueued,
             'missing_email_count'  => $missingEmailCount,

@@ -1,7 +1,7 @@
 import { Link, usePage } from '@inertiajs/react';
 import {
     LayoutDashboard, School, Users, GraduationCap, UserCog,
-    CalendarDays, BookOpen, ClipboardList, DollarSign,
+    CalendarDays, Calendar, BookOpen, ClipboardList, DollarSign,
     Library, Bus, Home, Package, MessageSquare, BarChart3,
     Settings, ChevronLeft, ChevronRight, Layers, Clock, CalendarOff,
     Building2, BadgeCheck, NotebookPen, Video, Megaphone, Mail, Send, Bell,
@@ -71,6 +71,7 @@ const navGroups: NavGroup[] = [
         title: 'Finance',
         items: [
             { label: 'Fee Payments',   href: '/school/fees/payments',   icon: DollarSign,  roles: ['super-admin','school-admin','accountant'] },
+            { label: 'Fee Billing',    href: '/school/fees/recurring-billing', icon: Calendar, roles: ['super-admin','school-admin','accountant'] },
             { label: 'Fee Structures', href: '/school/fees/structures',  icon: BarChart3,   roles: ['super-admin','school-admin','accountant'] },
             { label: 'Fee Categories', href: '/school/fees/categories',  icon: ClipboardList, roles: ['super-admin','school-admin','accountant'] },
         ],

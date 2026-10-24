@@ -105,6 +105,7 @@ interface BulkExecutionResult {
     assignments_created: number;
     already_assigned: number;
     vouchers_generated: number;
+    vouchers_updated?: number;
     already_billed: number;
     notifications_queued: number;
     missing_email_count: number;
@@ -327,7 +328,7 @@ export default function BulkAssign({
                             <div className="rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-center">
                                 <span className="text-xs text-slate-500 font-medium">Vouchers Generated</span>
                                 <p className="text-2xl font-bold text-indigo-600 mt-1">{result.vouchers_generated}</p>
-                                <span className="text-[11px] text-slate-400">{result.already_billed} already billed</span>
+                                <span className="text-[11px] text-slate-400">{result.vouchers_updated ? `${result.vouchers_updated} existing updated · ` : ''}{result.already_billed} already billed</span>
                             </div>
                             <div className="rounded-lg bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-3 text-center">
                                 <span className="text-xs text-slate-500 font-medium">Notifications Queued</span>

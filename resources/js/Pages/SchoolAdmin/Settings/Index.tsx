@@ -10,7 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import {
     Settings, Building2, Palette, GraduationCap, Bell,
-    Save, Upload, CheckCircle,
+    Save, Upload, CheckCircle, Calendar, ShieldCheck, AlertTriangle,
 } from 'lucide-react';
 
 interface SchoolData {
@@ -29,6 +29,7 @@ const TABS = [
     { id: 'branding',      label: 'Branding',       icon: Palette },
     { id: 'academic',      label: 'Academic',       icon: GraduationCap },
     { id: 'notifications', label: 'Notifications',  icon: Bell },
+    { id: 'fees',          label: 'Fee Billing',    icon: Calendar },
 ] as const;
 
 type TabId = typeof TABS[number]['id'];
@@ -416,6 +417,105 @@ function NotificationsTab({ settings }: { settings: Record<string, string> }) {
     );
 }
 
+/* ── Fee Billing Tab ── */
+function FeeBillingTab({ settings }: { settings: Record<string, string> }) {
+    const form = useForm({
+        auto_billing_enabled: settings.auto_billing_enabled === '1' || settings.auto_billing_enabled === 'true',
+        auto_billing_day: parseInt(settings.auto_billing_day || '1', 10),
+        recurring_fee_due_day: parseInt(settings.recurring_fee_due_day || '10', 10),
+    });
+    const { flash } = usePage<any>().props;
+
+    return (
+        <form onSubmit={e => { e.preventDefault(); form.post('/school/settings/fee-billing'); }}>
+            <Card>
+                <CardHeader>
+                    <div className="flex items-center justify-between">
+                        <div>
+                            <CardTitle className="text-base">Automatic Fee Billing</CardTitle>
+                            <CardDescription>Configure automatic recurring monthly voucher generation.</CardDescription>
+                        </div>
+                        <a href="/school/fees/recurring-billing" className="text-xs text-indigo-600 hover:text-indigo-700 font-medium inline-flex items-center gap-1">
+                            Open Billing Center →
+                        </a>
+                    </div>
+                </CardHeader>
+                <CardContent className="space-y-5">
+                    {flash?.success && <SuccessBanner message={flash.success} />}
+
+                    <div className="flex items-start justify-between p-4 bg-slate-50 dark:bg-slate-900/40 rounded-xl border border-slate-200 dark:border-slate-800">
+                        <div className="space-y-1">
+                            <Label className="font-medium text-slate-900 dark:text-slate-100">
+                                Automatically generate recurring fee vouchers
+                            </Label>
+                            <p className="text-xs text-slate-500 max-w-xl">
+                                When enabled, the background scheduler automatically generates vouchers for students with active recurring fee assignments on the specified billing day.
+                            </p>
+                        </div>
+                        <Toggle
+                            checked={form.data.auto_billing_enabled}
+                            onChange={(val) => form.setData('auto_billing_enabled', val)}
+                        />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                        <div>
+                            <Label htmlFor="auto_billing_day">Generate vouchers on day of every month (1–28)</Label>
+                            <Input
+                                id="auto_billing_day"
+                                type="number"
+                                min={1}
+                                max={28}
+                                value={form.data.auto_billing_day}
+                                onChange={e => form.setData('auto_billing_day', parseInt(e.target.value) || 1)}
+                            />
+                            <p className="text-xs text-slate-500 mt-1">E.g., 1 generates on the 1st day of each month.</p>
+                        </div>
+
+                        <div>
+                            <Label htmlFor="recurring_fee_due_day">Payment due date on day of billing month (1–28)</Label>
+                            <Input
+                                id="recurring_fee_due_day"
+                                type="number"
+                                min={1}
+                                max={28}
+                                value={form.data.recurring_fee_due_day}
+                                onChange={e => form.setData('recurring_fee_due_day', parseInt(e.target.value) || 10)}
+                            />
+                            <p className="text-xs text-slate-500 mt-1">E.g., 10 sets the due date to the 10th of the month.</p>
+                        </div>
+                    </div>
+
+                    <div className="p-3.5 bg-indigo-50/60 dark:bg-indigo-950/20 border border-indigo-100 dark:border-indigo-900/40 rounded-lg text-xs text-indigo-900 dark:text-indigo-200 space-y-1">
+                        <div className="font-semibold flex items-center gap-1.5">
+                            <ShieldCheck className="w-4 h-4 text-indigo-600" /> How Recurring Billing Operates
+                        </div>
+                        <ul className="list-disc pl-5 space-y-0.5 text-indigo-800 dark:text-indigo-300">
+                            <li>Student fee assignments remain active across months.</li>
+                            <li>The system automatically generates the next eligible recurring voucher.</li>
+                            <li>Existing duplicate protection guarantees no student is billed twice for the same month.</li>
+                            <li>If disabled, current manual billing behavior remains unchanged.</li>
+                        </ul>
+                    </div>
+
+                    {form.data.auto_billing_enabled && (
+                        <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-lg text-xs flex items-center gap-2">
+                            <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                            <span>Turning this on will automatically create fee vouchers for students with active recurring fee assignments.</span>
+                        </div>
+                    )}
+
+                    <div className="flex justify-end">
+                        <Button type="submit" disabled={form.processing} className="bg-indigo-600 hover:bg-indigo-700">
+                            <Save className="w-4 h-4 mr-1.5" /> Save Configuration
+                        </Button>
+                    </div>
+                </CardContent>
+            </Card>
+        </form>
+    );
+}
+
 /* ── Main Page ── */
 export default function SchoolSettingsIndex({ school, logoUrl, settings }: Props) {
     const [activeTab, setActiveTab] = useState<TabId>('general');
@@ -455,6 +555,7 @@ export default function SchoolSettingsIndex({ school, logoUrl, settings }: Props
                         {activeTab === 'branding'      && <BrandingTab logoUrl={logoUrl} settings={settings} />}
                         {activeTab === 'academic'      && <AcademicTab settings={settings} />}
                         {activeTab === 'notifications' && <NotificationsTab settings={settings} />}
+                        {activeTab === 'fees'          && <FeeBillingTab settings={settings} />}
                     </div>
                 </div>
             </div>

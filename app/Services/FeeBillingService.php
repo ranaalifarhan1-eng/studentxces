@@ -254,7 +254,8 @@ class FeeBillingService
         Student $student,
         AcademicYear $year,
         Carbon $targetMonth,
-        ?StudentFeeDiscount $discount = null
+        ?StudentFeeDiscount $discount = null,
+        int $alreadyAppliedDiscountCents = 0
     ): array {
         $lines = [];
         $totalGrossCents = 0;
@@ -341,7 +342,8 @@ class FeeBillingService
                     $discountCentsTotal = $targetTotalDisc;
                 } else {
                     // Fixed all-head discount: proportional allocation using integer cents
-                    $fixedTotal = min(\App\Support\Money::toCents($discount->value), $totalGrossCents);
+                    $remainingFixedCents = max(0, \App\Support\Money::toCents($discount->value) - $alreadyAppliedDiscountCents);
+                    $fixedTotal = min($remainingFixedCents, $totalGrossCents);
                     $allocatedSum = 0;
 
                     foreach ($lines as &$line) {
@@ -602,6 +604,109 @@ class FeeBillingService
     }
 
     /**
+     * Authoritative method to append missing charge lines to an existing active challan.
+     * Enforces pessimistic row-level lock (lockForUpdate), active_charge_key deduplication,
+     * exact mathematical recalculation of totals from sum of items (guaranteeing zero lost updates),
+     * paid -> partial transition, and concurrency collision safety.
+     *
+     * @param int $challanId
+     * @param array $lines Each element: ['fee_structure_id' => int, 'charge_period_key' => string, 'fee_head_name' => string, 'gross_cents' => int, 'discount_cents' => int, 'net_cents' => int]
+     * @param int $schoolId
+     * @param int $studentId
+     * @return FeeChallan|null
+     */
+    public static function appendLinesToExistingChallan(
+        int $challanId,
+        array $lines,
+        int $schoolId,
+        int $studentId
+    ): ?FeeChallan {
+        try {
+            return DB::transaction(function () use (
+                $challanId, $lines, $schoolId, $studentId
+            ) {
+                $lockedChallan = FeeChallan::where('id', $challanId)
+                    ->where('school_id', $schoolId)
+                    ->lockForUpdate()
+                    ->first();
+
+                if (! $lockedChallan || $lockedChallan->status === 'void') {
+                    return null;
+                }
+
+                $appendedGrossCents = 0;
+                $appendedDiscountCents = 0;
+                $appendedNetCents = 0;
+                $appendedCount = 0;
+
+                foreach ($lines as $line) {
+                    $activeChargeKey = self::buildActiveChargeKey($studentId, $line['fee_structure_id'], $line['charge_period_key']);
+
+                    $alreadyItem = FeeChallanItem::where('active_charge_key', $activeChargeKey)->exists();
+                    if ($alreadyItem) {
+                        continue;
+                    }
+
+                    FeeChallanItem::create([
+                        'fee_challan_id'    => $lockedChallan->id,
+                        'school_id'         => $schoolId,
+                        'student_id'        => $studentId,
+                        'fee_structure_id'  => $line['fee_structure_id'],
+                        'charge_period_key' => $line['charge_period_key'],
+                        'active_charge_key' => $activeChargeKey,
+                        'fee_head_name'     => $line['fee_head_name'],
+                        'gross_amount'      => \App\Support\Money::toDecimal($line['gross_cents']),
+                        'discount_amount'   => \App\Support\Money::toDecimal($line['discount_cents']),
+                        'net_amount'        => \App\Support\Money::toDecimal($line['net_cents']),
+                    ]);
+
+                    $appendedGrossCents += $line['gross_cents'];
+                    $appendedDiscountCents += $line['discount_cents'];
+                    $appendedNetCents += $line['net_cents'];
+                    $appendedCount++;
+                }
+
+                if ($appendedCount === 0) {
+                    return null;
+                }
+
+                // Authoritative sum of all items for this locked challan to guarantee zero lost updates
+                $items = FeeChallanItem::where('fee_challan_id', $lockedChallan->id)->get();
+                $totalGrossCents = $items->sum(fn ($i) => \App\Support\Money::toCents($i->gross_amount));
+                $totalDiscountCents = $items->sum(fn ($i) => \App\Support\Money::toCents($i->discount_amount));
+                $totalNetCents = $items->sum(fn ($i) => \App\Support\Money::toCents($i->net_amount));
+
+                $adjCents = \App\Support\Money::toCents($lockedChallan->adjustment_amount ?? '0.00');
+                $newPayableCents = max(0, $totalNetCents - $adjCents);
+                $currPaidCents = \App\Support\Money::toCents($lockedChallan->paid_amount);
+
+                $newStatus = $lockedChallan->status;
+                if ($lockedChallan->status === 'paid' && $newPayableCents > $currPaidCents) {
+                    $newStatus = 'partial';
+                }
+
+                $lockedChallan->update([
+                    'gross_amount'    => \App\Support\Money::toDecimal($totalGrossCents),
+                    'discount_amount' => \App\Support\Money::toDecimal($totalDiscountCents),
+                    'total_payable'   => \App\Support\Money::toDecimal($newPayableCents),
+                    'status'          => $newStatus,
+                ]);
+
+                $lockedChallan->was_appended = true;
+                $lockedChallan->appended_payable_cents = $appendedNetCents;
+                $lockedChallan->appended_items_count = $appendedCount;
+
+                return $lockedChallan;
+            });
+        } catch (\Illuminate\Database\QueryException $e) {
+            if (self::isUniqueConstraintViolation($e)) {
+                return null;
+            }
+            throw $e;
+        }
+    }
+
+    /**
      * Create FeeChallan and line items atomically from a resolved collection of structures.
      */
     public static function createChallanFromStructures(
@@ -624,20 +729,14 @@ class FeeBillingService
                 ->first();
         }
 
-        // 2. Prepare line items with exact cents
-        $prepared = self::prepareChallanLines($structures, $student, $academicYear, $targetMonth, $discount);
-        if (empty($prepared['lines']) || $prepared['total_payable_cents'] <= 0) {
-            return null;
-        }
-
         $billingPeriodKey = self::buildBillingPeriodKey($academicYear, $targetMonth);
         $activePeriodKey = self::buildActivePeriodKey($student->id, $billingPeriodKey);
 
         $targetYear = (int) $targetMonth->format('Y');
         $targetMonthNum = (int) $targetMonth->format('m');
 
-        // Prevent duplicate active challan (canonical key OR legacy active challan for the same billing month)
-        $exists = FeeChallan::where('school_id', $sid)
+        // Check if an active (non-void) challan exists for this student and billing period
+        $existingChallan = FeeChallan::where('school_id', $sid)
             ->where('student_id', $student->id)
             ->where('status', '!=', 'void')
             ->where(function ($q) use ($activePeriodKey, $billingPeriodKey, $targetYear, $targetMonthNum) {
@@ -649,10 +748,23 @@ class FeeBillingService
                           ->whereNotNull('active_period_key');
                   });
             })
-            ->exists();
+            ->first();
 
-        if ($exists) {
+        $alreadyDiscountCents = $existingChallan ? \App\Support\Money::toCents($existingChallan->discount_amount) : 0;
+
+        // 2. Prepare line items with exact cents
+        $prepared = self::prepareChallanLines($structures, $student, $academicYear, $targetMonth, $discount, $alreadyDiscountCents);
+        if (empty($prepared['lines']) || $prepared['gross_cents'] <= 0) {
             return null;
+        }
+
+        if ($existingChallan) {
+            return self::appendLinesToExistingChallan(
+                $existingChallan->id,
+                $prepared['lines'],
+                $sid,
+                $student->id
+            );
         }
 
         // 3. Compute informational memo for prior debt

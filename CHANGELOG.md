@@ -3,11 +3,23 @@
 All meaningful product changes, enhancements, fixes and production releases
 are recorded here.
 
+## [2026-10-24 20:55 PKT] — Fix Recurring Billing Center Frontend Routing
+
+**Module:** Fees / Recurring Billing / School Admin UI<br>
+**Status:** Committed & Production<br>
+**Commit:** 819cec99dffb699a255dce052afde7c552a971c9<br>
+
+### Fixed
+- **Recurring Billing Center Frontend Routing (`RecurringBilling.tsx`):**
+  - Resolved browser runtime crash (`ReferenceError: route is not defined`) on `/school/fees/recurring-billing`.
+  - Replaced undefined `route(...)` helper calls with canonical explicit endpoint paths (`/school/fees/recurring-billing/settings`, `/school/fees/recurring-billing/preview`, `/school/fees/recurring-billing/run-now`, `/school/fees/challans`, `/school/fees/structures/bulk-assign`).
+  - Aligned Recurring Billing Center with project-wide explicit routing pattern, restoring seamless navigation from Settings Fee Billing and Sidebar.
+
 ## [2026-10-24 13:50 PKT] — Recurring Fee Billing Recovery & Charge-Level Catch-Up
 
 **Module:** Fees / Recurring Billing / Automation / Multi-Tenancy<br>
-**Status:** Local / Uncommitted<br>
-**Commit:** Uncommitted<br>
+**Status:** Production<br>
+**Commit:** bee8d019941cfc6124ab926b5f291330fae36005<br>
 
 ### Added
 - **Monthly Recurring Billing Engine (`RecurringFeeBillingService`):**

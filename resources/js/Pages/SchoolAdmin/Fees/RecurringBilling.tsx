@@ -113,13 +113,13 @@ export default function RecurringBilling({ settings, school, currentYear, recent
 
     const handleSaveSettings = (e: React.FormEvent) => {
         e.preventDefault();
-        form.post(route('school.fees.recurring-billing.settings'));
+        form.post('/school/fees/recurring-billing/settings');
     };
 
     const handlePreview = async () => {
         setPreviewLoading(true);
         try {
-            const resp = await axios.post(route('school.fees.recurring-billing.preview'), {
+            const resp = await axios.post('/school/fees/recurring-billing/preview', {
                 month: selectedMonth,
             });
             setPreviewData(resp.data);
@@ -138,7 +138,7 @@ export default function RecurringBilling({ settings, school, currentYear, recent
 
         setRunLoading(true);
         router.post(
-            route('school.fees.recurring-billing.run-now'),
+            '/school/fees/recurring-billing/run-now',
             { month: selectedMonth },
             {
                 onFinish: () => {
@@ -157,7 +157,7 @@ export default function RecurringBilling({ settings, school, currentYear, recent
                     <div>
                         <div className="flex items-center gap-2 mb-1">
                             <Link
-                                href={route('school.fees.challans.index')}
+                                href="/school/fees/challans"
                                 className="text-slate-500 hover:text-slate-700 text-sm flex items-center gap-1"
                             >
                                 <ArrowLeft className="w-4 h-4" /> Back to Challans
@@ -173,7 +173,7 @@ export default function RecurringBilling({ settings, school, currentYear, recent
                     </div>
 
                     <div className="flex items-center gap-2">
-                        <Link href={route('school.fees.structures.bulk-assign')}>
+                        <Link href="/school/fees/structures/bulk-assign">
                             <Button variant="outline" size="sm">
                                 Manual Bulk Assign
                             </Button>
